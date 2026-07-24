@@ -408,12 +408,16 @@
 
   /* Mobile Main-page layout — desktop is completely untouched above 800px. */
   @media (max-width: 800px) {
+    .app { padding-left: 4px; padding-right: 4px; }
+    header.top { margin: -14px -4px 6px; padding: 6px 4px; }
+    .page-accent-bar { display: none; }
+    .legend-note { margin-left: 0 !important; }
     .mobile-plan-row {
       display: flex; align-items: center; gap: 8px; margin-bottom: 6px;
     }
     .mobile-plan-row #planApplied {
-      flex: 1; font-size: 15px; font-weight: 700; color: var(--page-accent);
-      letter-spacing: 0.02em;
+      flex: 1; font-size: 18px; font-weight: 700; color: var(--page-accent);
+      letter-spacing: 0.02em; text-align: center;
     }
     .plan-row {
       display: grid;
@@ -430,10 +434,15 @@
     .plan-row #timeAdd { grid-area: addnow; justify-self: center; }
     .day-slider-inline button { padding: 6px 9px; font-size: 17px; min-width: 30px; }
     .day-slider-inline .day-today-btn {
-      font-size: 12px; padding: 7px 10px; font-weight: 800;
+      font-size: 13px; padding: 7px 10px; font-weight: 800;
       background: var(--page-accent-2, var(--accent-2));
     }
-    .now-badge { padding: 9px 20px; font-size: 16px; }
+    .now-badge { padding: 7px 14px; font-size: 13px; }
+    #timeAdd.add-now-badge {
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      line-height: 1.15; padding: 7px 14px; font-size: 14px; gap: 1px;
+    }
+    .time-slider { margin-left: 4px; }
     .time-slider .range-label { display: none; }
     .time-slider button#timeBack, .time-slider button#timeFwd {
       font-size: 20px; padding: 6px 14px;
@@ -838,6 +847,7 @@
 
   .legend { display: flex; gap: 10px; font-size: 11px; color: var(--text-dim); flex-wrap: wrap; align-items: center; }
   .legend .swatch { display: inline-block; width: 14px; height: 14px; border-radius: 3px; vertical-align: middle; margin-right: 4px; border: 1px solid var(--border); }
+  .legend-note { margin-left: auto; }
 
   details.help summary { color: var(--text-dim); font-size: 12px; cursor: pointer; padding: 4px 0; }
   details.help summary:hover { color: var(--text); }
@@ -1019,7 +1029,7 @@
             <input id="timeOffset" type="range" min="-12" max="12" step="1" value="0" />
             <button id="timeFwd" title="Forward 1 hour">▶</button>
             <span class="range-label" id="rangeLabel"></span>
-            <button id="timeAdd" class="add-now-badge" title="Add an item for right now">+ Add now</button>
+            <button id="timeAdd" class="add-now-badge" title="Add an item for right now"><span class="addnow-l1">+ Add</span> <span class="addnow-l2">Now</span></button>
             <button id="timeNow" class="now-badge" title="Snap back to current time">↺ Now</button>
           </div>
         </div>
@@ -1032,7 +1042,7 @@
           <span><span class="swatch" style="background: var(--panel-2);"></span>Pending — not yet due (doesn't count)</span>
           <span><span class="swatch" style="background: rgba(96,165,250,0.18); border-color: rgba(96,165,250,0.45);"></span>Logged now — real-time, always counts</span>
           <span><span class="swatch" style="background: var(--panel-2); box-shadow: 0 0 0 2px rgba(110,231,183,0.55);"></span>New in plan</span>
-          <span style="margin-left: auto;"><em>Click = confirm/cycle (plan items) · Right-click = delete log</em></span>
+          <span class="legend-note"><em>Click = confirm/cycle (plan items) · Right-click = delete log</em></span>
         </div>
       </div>
 
@@ -1670,7 +1680,7 @@
 // Bump this on every deploy-worthy change — shown in the header and footer so
 // it's obvious at a glance whether a given device (phone vs desktop) has
 // actually picked up the latest deployed version after a reload.
-const APP_VERSION = "v37";
+const APP_VERSION = "v38";
 
 const STORAGE_KEY = "opto_app_v2";
 
@@ -3257,12 +3267,11 @@ function renderMain() {
 
   // Build 9 half-hour columns: -1h to +3h relative to center, center at index 2
   // Desktop keeps the existing -1h..+3h (9-column) window unchanged. Mobile
-  // gets a narrower -1.5h..+1.5h (7-column, 3hr total) window with "now"
-  // exactly centered — both to fit the narrower screen and per the requested
-  // "Now in the middle" layout.
+  // gets a narrower -2h..+1h (7-column) window — 2 hours of history plus
+  // 1 hour ahead, per Kelvin's request — to fit the narrower screen.
   const isMobileMainView = window.matchMedia("(max-width: 800px)").matches;
-  const colStart = isMobileMainView ? -3 : -2;
-  const colEnd = isMobileMainView ? 3 : 6;
+  const colStart = isMobileMainView ? -4 : -2;
+  const colEnd = isMobileMainView ? 2 : 6;
   const cols = [];
   for (let i = colStart; i <= colEnd; i++) {
     const tm = (((centerBucket + i * 30) % 1440) + 1440) % 1440;
