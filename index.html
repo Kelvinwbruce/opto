@@ -1594,6 +1594,16 @@
   </div>
 </div>
 
+<div class="modal-bg" id="ingredientViewModal">
+  <div class="modal" style="max-width: 420px;">
+    <h3 id="ingredientViewTitle"></h3>
+    <div id="ingredientViewList" style="font-size: 13px; line-height: 1.7; color: var(--text-dim);"></div>
+    <div class="modal-actions">
+      <button id="ingredientViewClose" type="button" class="primary">Close</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-bg" id="adminModal">
   <div class="modal" style="max-width: 760px;">
     <h3>Admin / Diagnostic</h3>
@@ -1677,7 +1687,7 @@
 // Bump this on every deploy-worthy change — shown in the header and footer so
 // it's obvious at a glance whether a given device (phone vs desktop) has
 // actually picked up the latest deployed version after a reload.
-const APP_VERSION = "v49";
+const APP_VERSION = "v50";
 
 const STORAGE_KEY = "opto_app_v2";
 
@@ -3403,8 +3413,17 @@ function renderMain() {
       if (item.cat === "Test") {
         openTestResultModal(item); // handles both planned and logged test entries
       } else if (item._log) {
-        // Real-time entries are already confirmed by their creation — no tap needed.
-        showToast("Already logged — right-click (or double-tap) to delete");
+        // Real-time entries are already confirmed by their creation — no tap
+        // needed, so a tap here is free to do something more useful. If this
+        // item has a real ingredient/component breakdown (a Drink recipe, or
+        // a Vitamin/Supplement's structured ingredients), show it; otherwise
+        // fall back to the plain confirmation, same as before.
+        const info = getItemIngredientInfo(item);
+        if (info) {
+          showIngredientViewModal(item.name, info);
+        } else {
+          showToast("Already logged — right-click (or double-tap) to delete");
+        }
       } else {
         cycleStatus(item);
       }
@@ -3521,8 +3540,12 @@ function renderFullDay(sched) {
     for (const it of hours[h]) {
       const st = it._log ? "" : (it._appt ? getStatus(it) : getVisualStatus(it, currentViewDateStr()));
       const logCls = it._log ? " is-log" : "";
+      // Drink's "detail" is literally its ingredient/recipe text (e.g. Coffee2's
+      // full ingredient list) — too long for this summary view. Everything else's
+      // detail is a short, genuinely useful note, so it still shows inline.
+      const showDetail = it.detail && it.cat !== "Drink";
       html += `<span class="slot-pill ${st}${logCls}" title="${escapeAttr(it.detail||'')}">
-        <span class="dot"></span><strong style="font-weight:600;">${escapeHtml(it.cat)}:</strong> ${escapeHtml(it.name)}${it.detail ? ' &middot; '+escapeHtml(it.detail) : ''}
+        <span class="dot"></span><strong style="font-weight:600;">${escapeHtml(it.cat)}:</strong> ${escapeHtml(it.name)}${showDetail ? ' &middot; '+escapeHtml(it.detail) : ''}
       </span> `;
     }
     html += '</div>';
@@ -7241,6 +7264,7 @@ function wire() {
     backupWriteBlocked = false;
     saveState();
   };
+  document.getElementById("ingredientViewClose").onclick = () => document.getElementById("ingredientViewModal").classList.remove("open");
   document.getElementById("navExport").addEventListener("click", exportData);
   document.getElementById("navImport").addEventListener("click", importData);
   document.getElementById("navAddEdit").addEventListener("click", openQuickAddModal);
@@ -7475,6 +7499,38 @@ function showRecoveryModal(meta) {
       `Last known save: ${savedAt} — approximately ${info.logsCount||0} log(s), ${info.capturesCount||0} capture(s), ${info.testDatesCount||0} test date(s).`;
   }
   document.getElementById("recoveryModal").classList.add("open");
+}
+
+// Looks up whatever ingredient/component breakdown a logged item actually
+// has, regardless of category — a Drink's logged detail IS its recipe text
+// (e.g. Coffee2's ingredient list), while a Vitamin/Supplement's breakdown
+// lives separately on its catalog entry (checked by name, since Supplement
+// items can have it too even though it's not in Supplement's own registry
+// field list — the two share one editor modal). Returns null if there's
+// nothing beyond what's already shown inline (e.g. a plain dose note).
+function getItemIngredientInfo(item) {
+  if (item.cat === "Drink" && item.detail && item.detail.trim()) {
+    return { type: "text", text: item.detail };
+  }
+  const catalog = (state.intake.vitamins || []).concat(state.intake.supplements || []);
+  const entry = catalog.find(c => c.name === item.name);
+  if (entry && entry.ingredients && entry.ingredients.length) {
+    return { type: "list", items: entry.ingredients };
+  }
+  return null;
+}
+
+function showIngredientViewModal(name, info) {
+  document.getElementById("ingredientViewTitle").textContent = name;
+  const list = document.getElementById("ingredientViewList");
+  if (info.type === "text") {
+    list.textContent = info.text;
+  } else {
+    list.innerHTML = info.items.map(ing =>
+      `<div>${escapeHtml(ing.name || "")}${ing.amount ? " — " + escapeHtml(ing.amount) : ""}</div>`
+    ).join("");
+  }
+  document.getElementById("ingredientViewModal").classList.add("open");
 }
 
 loadState();
