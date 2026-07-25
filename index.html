@@ -413,40 +413,37 @@
     .page-accent-bar { display: none; }
     .legend-note { margin-left: 0 !important; }
     .mobile-plan-row {
-      display: flex; align-items: center; gap: 8px; margin-bottom: 6px;
+      display: flex; align-items: center; gap: 8px; margin-bottom: 4px;
     }
     .mobile-plan-row #planApplied {
       flex: 1; font-size: 18px; font-weight: 700; color: var(--page-accent);
-      letter-spacing: 0.02em; text-align: center;
+      letter-spacing: 0.02em; text-align: left;
     }
+    .mobile-plan-row #timeAdd { flex-shrink: 0; }
     .plan-row {
-      display: grid;
-      grid-template-columns: auto auto auto;
-      grid-template-areas:
-        ".   .    addnow"
-        "day now  group";
-      row-gap: 4px; column-gap: 8px;
-      align-items: center;
+      display: flex; align-items: center; gap: 6px;
     }
-    .plan-row .day-pill { grid-area: day; }
-    .plan-row #timeNow { grid-area: now; flex-shrink: 0; }
-    .plan-row .day-slider-inline { grid-area: group; justify-self: start; }
-    .plan-row #timeAdd { grid-area: addnow; justify-self: center; }
-    .day-slider-inline button { padding: 6px 9px; font-size: 17px; min-width: 30px; }
+    .plan-row .day-pill { flex-shrink: 0; }
+    .plan-row #timeNow { flex-shrink: 0; }
+    .plan-row .day-slider-inline { flex: 1; justify-content: space-between; }
+    .day-slider-inline button { padding: 8px 13px; font-size: 21px; min-width: 34px; }
     .day-slider-inline .day-today-btn {
-      font-size: 13px; padding: 7px 10px; font-weight: 800;
+      font-size: 15px; padding: 7px 10px; font-weight: 800;
       background: var(--page-accent-2, var(--accent-2));
     }
-    .now-badge { padding: 7px 14px; font-size: 13px; }
+    .now-badge { padding: 7px 14px; font-size: 15px; }
     #timeAdd.add-now-badge {
       display: flex; flex-direction: column; align-items: center; justify-content: center;
-      line-height: 1.15; padding: 7px 14px; font-size: 14px; gap: 1px;
+      line-height: 1.15; padding: 9px 18px; font-size: 15px; gap: 1px;
     }
-    .time-slider { margin-left: 4px; }
+    .time-slider { margin-left: 4px; margin-top: 2px; }
     .time-slider .range-label { display: none; }
     .time-slider button#timeBack, .time-slider button#timeFwd {
       font-size: 20px; padding: 6px 14px;
     }
+    nav.pages { width: 100%; justify-content: space-between; }
+    .menu-tools { width: 100%; justify-content: space-between; }
+    #navAnalysis { padding: 6px 16px; font-size: 13px; }
   }
   .four-hour th.now-marker { box-shadow: inset 0 -3px 0 var(--page-accent); }
   .four-hour th.now-marker::after { content: " ● now"; color: var(--page-accent); font-weight: 700; font-size: 10px; }
@@ -1680,7 +1677,7 @@
 // Bump this on every deploy-worthy change — shown in the header and footer so
 // it's obvious at a glance whether a given device (phone vs desktop) has
 // actually picked up the latest deployed version after a reload.
-const APP_VERSION = "v38";
+const APP_VERSION = "v39";
 
 const STORAGE_KEY = "opto_app_v2";
 
@@ -7043,8 +7040,8 @@ function moveControlsForMobile() {
     if (mobileRow && slots.planApplied && slots.planApplied.el.parentNode !== mobileRow) {
       mobileRow.appendChild(slots.planApplied.el);
     }
-    if (dayPill && slots.timeAdd && slots.timeAdd.el.parentNode !== dayPill.parentNode) {
-      dayPill.parentNode.appendChild(slots.timeAdd.el);
+    if (mobileRow && slots.timeAdd && slots.timeAdd.el.parentNode !== mobileRow) {
+      mobileRow.appendChild(slots.timeAdd.el);
     }
     if (dayPill && slots.timeNow && slots.timeNow.el.previousElementSibling !== dayPill) {
       dayPill.parentNode.insertBefore(slots.timeNow.el, dayPill.nextSibling);
