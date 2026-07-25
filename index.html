@@ -1677,7 +1677,7 @@
 // Bump this on every deploy-worthy change — shown in the header and footer so
 // it's obvious at a glance whether a given device (phone vs desktop) has
 // actually picked up the latest deployed version after a reload.
-const APP_VERSION = "v44";
+const APP_VERSION = "v47";
 
 const STORAGE_KEY = "opto_app_v2";
 
@@ -2334,6 +2334,14 @@ function writeStateMeta(st) {
 function metaLooksSubstantial(meta) {
   return !!meta && ((meta.logsCount || 0) + (meta.capturesCount || 0) + (meta.testDatesCount || 0)) > 0;
 }
+// True if the currently-loaded live state has no real data — used to catch the
+// case where BOTH the main state key and the meta marker were wiped together
+// (a real storage-eviction event clears a whole origin at once, not one key at
+// a time), so metaLooksSubstantial() alone can't tell a genuine first run apart
+// from actual data loss. See the second-signal check at boot, below.
+function stateLooksBlank(st) {
+  return ((st.logs || []).length + (st.captures || []).length + Object.keys(st.testResults || {}).length) === 0;
+}
 
 let state;
 let lastEditTs = 0;
@@ -2343,6 +2351,16 @@ let lastEditTs = 0;
 // to auto-save (arming a backup write) or show the recovery modal instead.
 let stateLoadRecovery = false;
 let stateLoadRecoveryInfo = null;
+// Blocks the actual backup-FILE write (see scheduleBackup()) while a suspected
+// data-loss case is still being verified. Set synchronously, immediately after
+// loadState(), before any boot-time migration has a chance to run — several of
+// them (seedCommonCatalogItems(), etc.) call saveState() on their own the very
+// first time they run, which would otherwise overwrite the last good Drive
+// backup with blank data before the async second-signal check below even gets
+// a chance to look for it. Local saveState() calls are still allowed to
+// proceed as normal during this window (that's just localStorage, recoverable) —
+// only the external file write is held back until we're sure.
+let backupWriteBlocked = false;
 
 function loadState() {
   let raw = null;
@@ -2531,21 +2549,26 @@ async function writeBackupNow() {
   if (backupWriteInFlight) return false;
   backupWriteInFlight = true;
   try {
-    const perm = await backupHandle.queryPermission({ mode: "readwrite" });
-    if (perm !== "granted") {
-      const req = await backupHandle.requestPermission({ mode: "readwrite" });
-      if (req !== "granted") {
-        // Common cause: this call came from a background timer (scheduleBackup's
-        // setTimeout), which has no user-activation, so the browser can't show a
-        // real permission prompt and silently declines. Surface it — previously
-        // this failed with zero console output and zero UI change.
-        backupWriteInFlight = false;
-        backupPermissionLost = true;
-        console.warn("writeBackupNow: backup file permission not granted (needs a user click to re-grant).");
-        setWarning("backup-permission", "Auto-backup lost file permission and has stopped writing.", "Reconnect", reconnectBackupPermission);
-        updateBackupStatus();
-        return false;
-      }
+    // Call requestPermission() directly rather than checking queryPermission()
+    // first — requestPermission() already returns "granted" immediately with no
+    // prompt if permission is already held, so the extra query added nothing but
+    // an extra await. That await mattered on mobile: a real tap's transient user-
+    // activation window is short, and burning it on a queryPermission() round
+    // trip could mean requestPermission() no longer counted as gesture-backed by
+    // the time it ran, so it silently declined instead of showing a prompt —
+    // even for a genuine "Backup now" tap, not just a background timer.
+    const req = await backupHandle.requestPermission({ mode: "readwrite" });
+    if (req !== "granted") {
+      // Common cause: this call came from a background timer (scheduleBackup's
+      // setTimeout), which has no user-activation, so the browser can't show a
+      // real permission prompt and silently declines. Surface it — previously
+      // this failed with zero console output and zero UI change.
+      backupWriteInFlight = false;
+      backupPermissionLost = true;
+      console.warn("writeBackupNow: backup file permission not granted (needs a user click to re-grant).");
+      setWarning("backup-permission", "Auto-backup lost file permission and has stopped writing.", "Reconnect", reconnectBackupPermission);
+      updateBackupStatus();
+      return false;
     }
     // Compose payload: _readable (date-grouped view, for humans) + actual state fields
     const payload = {
@@ -2597,6 +2620,7 @@ async function reconnectBackupPermission() {
 
 function scheduleBackup() {
   if (!backupHandle) return;
+  if (backupWriteBlocked) return;
   clearTimeout(backupWriteTimer);
   backupWriteTimer = setTimeout(writeBackupNow, 2000);
 }
@@ -3271,13 +3295,23 @@ function renderMain() {
   const colEnd = isMobileMainView ? 2 : 6;
   const cols = [];
   for (let i = colStart; i <= colEnd; i++) {
-    const tm = (((centerBucket + i * 30) % 1440) + 1440) % 1440;
+    const raw = centerBucket + i * 30;
+    const tm = ((raw % 1440) + 1440) % 1440;
     cols.push({
       totalMin: tm,
       hh: Math.floor(tm / 60),
       mm: tm % 60,
       isCenter: i === 0,
-      isNow: tm === nowBucket
+      isNow: tm === nowBucket,
+      // A column whose raw (unwrapped) minute value falls outside [0, 1440) has
+      // crossed midnight relative to the viewed date — e.g. viewing 10 PM with a
+      // +3h window wraps into "12:30 AM," which is actually tomorrow, not later
+      // tonight. `sched` only holds the single viewed date's items, so matching
+      // by time-of-day alone would wrongly pull in that same date's own early-
+      // morning entries (already hours in the past) and show them as if they
+      // were coming up later today. Wrapped columns are excluded from matching
+      // below instead — a real gap during the wrapped hours, but no wrong data.
+      wrapped: raw < 0 || raw >= 1440
     });
   }
 
@@ -3315,12 +3349,12 @@ function renderMain() {
     html += `<tr data-cat="${cat}"><td class="cat">${cat}</td>`;
     for (let i = 0; i < cols.length; i++) {
       const c = cols[i];
-      const slotItems = items.filter(it => {
+      const slotItems = c.wrapped ? [] : items.filter(it => {
         const tm = timeToMinutes(it.time);
         return tm >= c.totalMin && tm < c.totalMin + 30;
       });
       const cls = (c.isCenter ? "slot current-col" : "slot") + (c.isNow ? " now-col" : "");
-      html += `<td class="${cls}" data-hour="${c.hh}" data-min="${c.mm}" data-cat="${cat}">`;
+      html += `<td class="${cls}" data-hour="${c.hh}" data-min="${c.mm}" data-cat="${cat}" data-wrapped="${c.wrapped ? "1" : "0"}">`;
       for (const it of slotItems) {
         // Real-time (_log) items never show complete/notcomp — they're always
         // confirmed and shown in their own blue "is-log" color instead.
@@ -3430,9 +3464,13 @@ function renderMain() {
       // Clicking a cell ahead of the actual current time (while viewing today)
       // would otherwise stamp a real-time entry with a time that hasn't
       // happened yet. Clamp to now; backfilling a past cell today, or any
-      // cell on a different day, is unaffected.
+      // cell on a different day, is unaffected. A "wrapped" cell (e.g. "12:30 AM"
+      // in a window that runs past midnight) is also really in the future even
+      // though its time string looks small — plain string comparison alone
+      // would miss that, so the wrapped flag from rendering is checked too.
       const dayOffset = (state.ui && typeof state.ui.dayOffset === "number") ? state.ui.dayOffset : 0;
-      if (dayOffset === 0 && time > nowHHMM()) time = nowHHMM();
+      const wrapped = td.dataset.wrapped === "1";
+      if (dayOffset === 0 && (wrapped || time > nowHHMM())) time = nowHHMM();
       openAddNowFlow({ mode: "log", cat, time });
     });
   });
@@ -6987,6 +7025,7 @@ function importData() {
           state = { ...DEFAULT_STATE, ...d,
             settings: { ...DEFAULT_STATE.settings, ...(d.settings||{}) },
             ui: { ...DEFAULT_STATE.ui, ...(d.ui||{}) } };
+          backupWriteBlocked = false;
           saveState(); applyTheme();
           showPage("main");
           alert("Imported.");
@@ -7203,6 +7242,7 @@ function wire() {
   document.getElementById("recoveryStartFresh").onclick = () => {
     if (!confirm("Start fresh with a blank Opto? This will begin saving over your device's storage and backup file. Only continue if you're sure your previous data is really gone.")) return;
     document.getElementById("recoveryModal").classList.remove("open");
+    backupWriteBlocked = false;
     saveState();
   };
   document.getElementById("navExport").addEventListener("click", exportData);
@@ -7430,13 +7470,24 @@ function openTestReadingModal(testName, unit, cb) {
 
 function showRecoveryModal(meta) {
   const info = meta || {};
-  const savedAt = info.savedAt ? new Date(info.savedAt).toLocaleString() : "an earlier time";
-  document.getElementById("recoverySummary").textContent =
-    `Last known save: ${savedAt} — approximately ${info.logsCount||0} log(s), ${info.capturesCount||0} capture(s), ${info.testDatesCount||0} test date(s).`;
+  if (info.suspiciousBlankWithHandle) {
+    document.getElementById("recoverySummary").textContent =
+      "This device already has an auto-backup file connected from a previous setup, but local data now appears empty — a sign your browser may have cleared local storage. Your backup file itself has not been touched.";
+  } else {
+    const savedAt = info.savedAt ? new Date(info.savedAt).toLocaleString() : "an earlier time";
+    document.getElementById("recoverySummary").textContent =
+      `Last known save: ${savedAt} — approximately ${info.logsCount||0} log(s), ${info.capturesCount||0} capture(s), ${info.testDatesCount||0} test date(s).`;
+  }
   document.getElementById("recoveryModal").classList.add("open");
 }
 
 loadState();
+// Block on either signal: the original meta-marker check (already run inside
+// loadState()) or a currently-blank state pending the second-signal check
+// below. Blocking here, not just later, matters because boot-time migrations
+// below (seedCommonCatalogItems() etc.) call saveState() on their own the
+// first time they run, before the recovery decision is otherwise made.
+if (stateLoadRecovery || stateLooksBlank(state)) backupWriteBlocked = true;
 registerCustomCategories();
 migrateTestResults();
 (function migrateTimeOfDay() {
@@ -7464,25 +7515,60 @@ wire();
 renderCustomCategoryButtons();
 checkLicense();
 showPage("main");
-if (stateLoadRecovery) {
-  // Suspected data loss (see loadState()): skip the automatic save/backup-arm
-  // so we don't overwrite the last good Drive backup with a blank state.
-  // The user must explicitly choose to restore or start fresh.
-  showRecoveryModal(stateLoadRecoveryInfo);
-} else {
-  saveState();
+// Ask the browser to exempt this origin from automatic storage-pressure
+// eviction. Doesn't help against a user manually clearing site data, but
+// directly targets the more common silent-wipe scenario (OS/browser reclaiming
+// space from an unpersisted origin) rather than just detecting it after the
+// fact. Safe to call every load — a no-op once already granted.
+if (navigator.storage && navigator.storage.persist) {
+  navigator.storage.persist().catch(() => {});
 }
-initBackupHandle();
-initPhoneSyncHandle();
-// Re-arm sync test mode if it was left running across a reload (respects the 24h auto-stop window).
-if (state.syncTestMode && state.syncTestMode.active) {
-  if (Date.now() - state.syncTestMode.startedAt > SYNC_TEST_MAX_DURATION_MS) {
-    state.syncTestMode = { active: false, startedAt: null };
-    saveState();
-  } else {
-    armSyncTestTimer();
+(async () => {
+  // Second signal for suspected data loss: metaLooksSubstantial() can miss a
+  // real storage-eviction event, since that typically clears the whole origin
+  // (main state key AND the meta marker) together, not one key at a time. A
+  // backup-file handle lives in IndexedDB, a separate store — if it's still
+  // there while the live state looks freshly blank, that combination (a
+  // device that was already set up, now with no data) is itself suspicious,
+  // regardless of why. Only checked when the primary meta-marker signal
+  // didn't already catch it.
+  if (backupWriteBlocked && !stateLoadRecovery) {
+    try {
+      const existingHandle = await _loadBackupHandle();
+      if (existingHandle) {
+        stateLoadRecovery = true;
+        stateLoadRecoveryInfo = { suspiciousBlankWithHandle: true };
+      } else {
+        // No handle either — genuinely a fresh install, not suspected loss.
+        // Release the guard so normal backup writes can proceed as usual.
+        backupWriteBlocked = false;
+      }
+    } catch (e) {
+      // IndexedDB unavailable — can't confirm either way. Fail safe: release
+      // the guard rather than leave a genuine first run permanently blocked.
+      backupWriteBlocked = false;
+    }
   }
-}
+  if (stateLoadRecovery) {
+    // Suspected data loss (see loadState()): skip the automatic save/backup-arm
+    // so we don't overwrite the last good Drive backup with a blank state.
+    // The user must explicitly choose to restore or start fresh.
+    showRecoveryModal(stateLoadRecoveryInfo);
+  } else {
+    saveState();
+  }
+  initBackupHandle();
+  initPhoneSyncHandle();
+  // Re-arm sync test mode if it was left running across a reload (respects the 24h auto-stop window).
+  if (state.syncTestMode && state.syncTestMode.active) {
+    if (Date.now() - state.syncTestMode.startedAt > SYNC_TEST_MAX_DURATION_MS) {
+      state.syncTestMode = { active: false, startedAt: null };
+      saveState();
+    } else {
+      armSyncTestTimer();
+    }
+  }
+})();
 setInterval(checkBackupHealth, 5 * 60 * 1000);
 // Keep the Main timeline's auto-orange reminders and stale-item cleanup fresh
 // even if the user leaves the tab open without interacting.
