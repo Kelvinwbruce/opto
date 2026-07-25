@@ -419,13 +419,13 @@
       flex: 1; font-size: 20px; font-weight: 700; color: var(--page-accent);
       letter-spacing: 0.02em; text-align: left; padding-left: 12px;
     }
-    .mobile-plan-row #timeAdd { flex-shrink: 0; margin-left: auto; margin-right: -6px; width: 161px; }
+    .mobile-plan-row #timeAdd { flex-shrink: 0; margin-left: auto; }
     .plan-row {
       display: flex; align-items: center; gap: 6px;
     }
     .plan-row .day-pill { flex-shrink: 0; }
-    .plan-row #timeNow { flex-shrink: 0; margin-left: 12px; }
-    .plan-row .day-slider-inline { flex-shrink: 0; margin-left: 8px; margin-right: 4px; gap: 3px; padding: 2px 3px; }
+    .plan-row #timeNow { flex-shrink: 0; margin-left: 20px; }
+    .plan-row .day-slider-inline { flex-shrink: 0; margin-left: auto; gap: 3px; padding: 2px 3px; }
     .day-slider-inline button { padding: 8px 13px; font-size: 21px; min-width: 34px; }
     .day-slider-inline .day-today-btn {
       font-size: 15px; padding: 7px 10px; font-weight: 800;
@@ -434,7 +434,7 @@
     .now-badge { padding: 7px 14px; font-size: 15px; }
     #timeAdd.add-now-badge {
       display: flex; align-items: center; justify-content: center;
-      padding: 8px 10px; font-size: 15px;
+      padding: 7px 10px; font-size: 14px;
     }
     .time-slider { margin-left: 4px; margin-top: 2px; }
     .time-slider .range-label { display: none; }
@@ -1677,7 +1677,7 @@
 // Bump this on every deploy-worthy change — shown in the header and footer so
 // it's obvious at a glance whether a given device (phone vs desktop) has
 // actually picked up the latest deployed version after a reload.
-const APP_VERSION = "v42";
+const APP_VERSION = "v43";
 
 const STORAGE_KEY = "opto_app_v2";
 
