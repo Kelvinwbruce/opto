@@ -405,7 +405,6 @@
   }
   .add-now-badge:hover { filter: brightness(1.08); }
   .now-badge:hover { filter: brightness(1.05); }
-  .addnow-ghost { visibility: hidden; }
 
   /* Mobile Main-page layout — desktop is completely untouched above 800px. */
   @media (max-width: 800px) {
@@ -414,13 +413,13 @@
     .page-accent-bar { display: none; }
     .legend-note { margin-left: 0 !important; }
     .mobile-plan-row {
-      display: flex; align-items: center; gap: 8px; margin-bottom: 4px;
+      display: flex; align-items: center; gap: 8px; margin-bottom: 8px;
     }
     .mobile-plan-row #planApplied {
       flex: 1; font-size: 20px; font-weight: 700; color: var(--page-accent);
       letter-spacing: 0.02em; text-align: left; padding-left: 12px;
     }
-    .mobile-plan-row #timeAdd { flex-shrink: 0; margin-right: 40px; }
+    .mobile-plan-row #timeAdd { flex-shrink: 0; margin-left: auto; margin-right: -6px; width: 161px; }
     .plan-row {
       display: flex; align-items: center; gap: 6px;
     }
@@ -434,8 +433,8 @@
     }
     .now-badge { padding: 7px 14px; font-size: 15px; }
     #timeAdd.add-now-badge {
-      display: flex; flex-direction: column; align-items: flex-start; justify-content: center;
-      line-height: 1.15; padding: 7px 14px; font-size: 13px; gap: 1px;
+      display: flex; align-items: center; justify-content: center;
+      padding: 8px 10px; font-size: 15px;
     }
     .time-slider { margin-left: 4px; margin-top: 2px; }
     .time-slider .range-label { display: none; }
@@ -1027,7 +1026,7 @@
             <input id="timeOffset" type="range" min="-12" max="12" step="1" value="0" />
             <button id="timeFwd" title="Forward 1 hour">▶</button>
             <span class="range-label" id="rangeLabel"></span>
-            <button id="timeAdd" class="add-now-badge" title="Add an item for right now"><span class="addnow-l1">+ Add</span> <span class="addnow-l2"><span class="addnow-ghost">+ </span>Now</span></button>
+            <button id="timeAdd" class="add-now-badge" title="Add an item for right now">+ Add Now</button>
             <button id="timeNow" class="now-badge" title="Snap back to current time">↺ Now</button>
           </div>
         </div>
@@ -1678,7 +1677,7 @@
 // Bump this on every deploy-worthy change — shown in the header and footer so
 // it's obvious at a glance whether a given device (phone vs desktop) has
 // actually picked up the latest deployed version after a reload.
-const APP_VERSION = "v41";
+const APP_VERSION = "v42";
 
 const STORAGE_KEY = "opto_app_v2";
 
