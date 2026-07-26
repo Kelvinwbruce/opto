@@ -1687,7 +1687,7 @@
 // Bump this on every deploy-worthy change — shown in the header and footer so
 // it's obvious at a glance whether a given device (phone vs desktop) has
 // actually picked up the latest deployed version after a reload.
-const APP_VERSION = "v50";
+const APP_VERSION = "v53";
 
 const STORAGE_KEY = "opto_app_v2";
 
@@ -2324,6 +2324,15 @@ function renderWarningBanner() {
 // shows prior data existed, but the main state key is now missing/corrupt).
 // ============================================================================
 const STATE_META_KEY = "opto_state_meta_v1";
+// Separate from the handle itself (stored in IndexedDB) — records that a
+// backup file WAS connected at some point, so initBackupHandle() can tell
+// "never set up" apart from "was connected, and that connection is now
+// gone" (e.g. the IndexedDB-stored handle got cleared independently of
+// localStorage). Previously this second case failed completely silently —
+// checkBackupPermissionProactively() only ever checks permission on an
+// existing handle, so if the handle itself vanished there was nothing to
+// warn about from that code's point of view.
+const BACKUP_WAS_CONNECTED_KEY = "opto_backup_was_connected_v1";
 function readStateMeta() {
   try {
     const raw = JSON.parse(localStorage.getItem(STATE_META_KEY));
@@ -2482,6 +2491,7 @@ async function connectBackupFile() {
     });
     backupHandle = handle;
     await _saveBackupHandle(handle);
+    localStorage.setItem(BACKUP_WAS_CONNECTED_KEY, "1");
     await writeBackupNow();
     updateBackupStatus();
     alert("Auto-backup connected to " + handle.name + ".\n\nFrom now on, every change saves to this file automatically.\n\nTip: if you put this file in your Google Drive folder, it also syncs to the cloud and across devices for free.");
@@ -2494,6 +2504,7 @@ async function disconnectBackupFile() {
   if (!confirm("Disconnect auto-backup?\n\nFuture changes won't be saved to the file. Your existing backup file stays where it is (you can delete or import from it later).")) return;
   backupHandle = null;
   await _clearBackupHandle();
+  localStorage.removeItem(BACKUP_WAS_CONNECTED_KEY);
   updateBackupStatus();
 }
 
@@ -2804,7 +2815,14 @@ async function syncFromPhoneNow(silent) {
     let categoriesAdded = 0;
     let categoryItemsAdded = 0;
     for (const c of incomingCustomCats) {
-      if (!state.intake.customCategories.find(existing => existing.id === c.id)) {
+      // Trimmed + case-insensitive match, same as addCustomCategory()'s own
+      // duplicate check — an exact-string match alone missed the case where
+      // each device independently created the "same" category (e.g. both
+      // typed "Expenses") before either had synced the other's copy yet, so
+      // both passed their own device-local check but then sync itself failed
+      // to recognize them as the same thing, producing a real duplicate.
+      const cIdNorm = (c.id || "").trim().toLowerCase();
+      if (!state.intake.customCategories.find(existing => (existing.id || "").trim().toLowerCase() === cIdNorm)) {
         state.intake.customCategories.push({ ...c });
         categoriesAdded++;
       }
@@ -3051,6 +3069,12 @@ async function initBackupHandle() {
       // Don't auto-trigger a write on load — that would prompt for permission immediately.
       // Wait for the next state change or explicit Backup now click.
       checkBackupPermissionProactively();
+    } else if (localStorage.getItem(BACKUP_WAS_CONNECTED_KEY)) {
+      // A backup WAS connected before, but the stored handle itself is gone —
+      // different from (and previously invisible next to) plain permission
+      // loss, which only checks an existing handle. This is the case that
+      // silently produced no warning at all until now.
+      setWarning("backup-connection-lost", "Auto-backup was connected, but that connection is now missing — nothing is being saved to a file.", "Reconnect", openSettingsBackupSection);
     }
   } catch (e) {
     console.warn("initBackupHandle:", e);
@@ -7259,7 +7283,7 @@ function wire() {
     openSettingsBackupSection();
   };
   document.getElementById("recoveryStartFresh").onclick = () => {
-    if (!confirm("Start fresh with a blank Opto? This will begin saving over your device's storage and backup file. Only continue if you're sure your previous data is really gone.")) return;
+    if (!confirm("Start fresh with a blank Opto? This will begin saving over your device's storage and backup file. Only continue if this is genuinely a new setup, or you're sure any previous data is really gone.")) return;
     document.getElementById("recoveryModal").classList.remove("open");
     backupWriteBlocked = false;
     saveState();
@@ -7490,13 +7514,28 @@ function openTestReadingModal(testName, unit, cb) {
 
 function showRecoveryModal(meta) {
   const info = meta || {};
-  if (info.suspiciousBlankWithHandle) {
-    document.getElementById("recoverySummary").textContent =
-      "This device already has an auto-backup file connected from a previous setup, but local data now appears empty — a sign your browser may have cleared local storage. Your backup file itself has not been touched.";
+  const titleEl = document.querySelector("#recoveryModal h3");
+  const introEl = document.querySelector("#recoveryModal p");
+  if (info.unknownBlank) {
+    // No data AND no surviving signal either way (e.g. a full "clear cookies
+    // and other site data" wipes the meta-marker and the IndexedDB backup-
+    // handle together, same as everything else) — can't tell a genuine first
+    // run apart from a wipe here, so ask plainly instead of guessing either
+    // way or, worse, silently assuming "first run" and saying nothing at all.
+    if (titleEl) titleEl.textContent = "No data found on this device";
+    if (introEl) introEl.textContent = "This could be a brand new setup, or a sign this device's browser storage was cleared. If you expect to see existing logs/history here, you can restore from a backup file.";
+    document.getElementById("recoverySummary").textContent = "";
   } else {
-    const savedAt = info.savedAt ? new Date(info.savedAt).toLocaleString() : "an earlier time";
-    document.getElementById("recoverySummary").textContent =
-      `Last known save: ${savedAt} — approximately ${info.logsCount||0} log(s), ${info.capturesCount||0} capture(s), ${info.testDatesCount||0} test date(s).`;
+    if (titleEl) titleEl.textContent = "⚠ Your Opto data appears to be missing";
+    if (introEl) introEl.textContent = "This device previously had saved data, but it can no longer be found in browser storage. This can happen if the browser or OS cleared site data, or if storage was evicted.";
+    if (info.suspiciousBlankWithHandle) {
+      document.getElementById("recoverySummary").textContent =
+        "This device already has an auto-backup file connected from a previous setup, but local data now appears empty — a sign your browser may have cleared local storage. Your backup file itself has not been touched.";
+    } else {
+      const savedAt = info.savedAt ? new Date(info.savedAt).toLocaleString() : "an earlier time";
+      document.getElementById("recoverySummary").textContent =
+        `Last known save: ${savedAt} — approximately ${info.logsCount||0} log(s), ${info.capturesCount||0} capture(s), ${info.testDatesCount||0} test date(s).`;
+    }
   }
   document.getElementById("recoveryModal").classList.add("open");
 }
@@ -7591,14 +7630,21 @@ if (navigator.storage && navigator.storage.persist) {
         stateLoadRecovery = true;
         stateLoadRecoveryInfo = { suspiciousBlankWithHandle: true };
       } else {
-        // No handle either — genuinely a fresh install, not suspected loss.
-        // Release the guard so normal backup writes can proceed as usual.
-        backupWriteBlocked = false;
+        // No surviving handle either — e.g. a full "clear cookies and other
+        // site data" wipes the meta-marker and this IndexedDB handle together,
+        // same as everything else, leaving no way to tell a genuine first run
+        // apart from a wipe. Rather than silently assuming "first run" (which
+        // is exactly how this kind of wipe went unnoticed before), ask —
+        // cheap for a real first run (one extra tap), and closes the gap for
+        // the case with zero surviving signals.
+        stateLoadRecovery = true;
+        stateLoadRecoveryInfo = { unknownBlank: true };
       }
     } catch (e) {
-      // IndexedDB unavailable — can't confirm either way. Fail safe: release
-      // the guard rather than leave a genuine first run permanently blocked.
-      backupWriteBlocked = false;
+      // IndexedDB itself unavailable — can't confirm either way. Same
+      // reasoning: ask rather than silently proceed.
+      stateLoadRecovery = true;
+      stateLoadRecoveryInfo = { unknownBlank: true };
     }
   }
   if (stateLoadRecovery) {
