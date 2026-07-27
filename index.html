@@ -1023,7 +1023,7 @@
           <div class="now-pill" id="nowPill">--:--</div>
           <div class="time-slider">
             <button id="timeBack" title="Back 1 hour">◀</button>
-            <input id="timeOffset" type="range" min="-12" max="12" step="1" value="0" />
+            <input id="timeOffset" type="range" min="-24" max="4" step="1" value="0" />
             <button id="timeFwd" title="Forward 1 hour">▶</button>
             <span class="range-label" id="rangeLabel"></span>
             <button id="timeAdd" class="add-now-badge" title="Add an item for right now">+ Add Now</button>
@@ -1687,7 +1687,7 @@
 // Bump this on every deploy-worthy change — shown in the header and footer so
 // it's obvious at a glance whether a given device (phone vs desktop) has
 // actually picked up the latest deployed version after a reload.
-const APP_VERSION = "v53";
+const APP_VERSION = "v56";
 
 const STORAGE_KEY = "opto_app_v2";
 
@@ -3139,16 +3139,37 @@ function activePlanForDate(date) {
   return state.plans.find(p => p.days && p.days.includes(dow)) || state.plans[0];
 }
 
-// Returns the currently-viewed date (today + dayOffset from state.ui)
+// Combines the day-page offset (state.ui.dayOffset, whole days) with the
+// time-scrub offset (state.ui.timeOffset, hours) into one absolute minute
+// value relative to real "now". Scrubbing time backward/forward past
+// midnight naturally carries into the next/previous day this way, instead
+// of the two offsets being tracked as unrelated numbers.
+function currentViewAbsMin() {
+  const dayOffset = (state.ui && typeof state.ui.dayOffset === "number") ? state.ui.dayOffset : 0;
+  const timeOffset = (state.ui && typeof state.ui.timeOffset === "number") ? state.ui.timeOffset : 0;
+  const now = new Date();
+  const nowBucket = Math.floor((now.getHours() * 60 + now.getMinutes()) / 30) * 30;
+  return dayOffset * 1440 + nowBucket + timeOffset * 60;
+}
+
+// Returns the currently-viewed date, accounting for BOTH the day-page offset
+// and any midnight crossing caused by the time-scrub offset.
 function currentViewDate() {
-  const offset = (state.ui && typeof state.ui.dayOffset === "number") ? state.ui.dayOffset : 0;
+  const absMin = currentViewAbsMin();
+  const dayShift = Math.floor(absMin / 1440);
   const d = new Date();
-  d.setDate(d.getDate() + offset);
+  d.setDate(d.getDate() + dayShift);
   return d;
 }
 
 function currentViewDateStr() {
   const d = currentViewDate();
+  return localDateStr(d);
+}
+
+function dateStrPlusDays(dateStr, delta) {
+  const d = new Date(dateStr + "T12:00:00");
+  d.setDate(d.getDate() + delta);
   return localDateStr(d);
 }
 
@@ -3192,20 +3213,20 @@ function statusKey(item) { return [item.cat, item.time, item.name].join("|"); }
 function getStatusForDate(item, dateStr) {
   return (state.status[dateStr] || {})[statusKey(item)] || "";
 }
-function getStatus(item) {
-  return getStatusForDate(item, currentViewDateStr());
+function getStatus(item, dateStr) {
+  return getStatusForDate(item, dateStr || currentViewDateStr());
 }
-function setStatus(item, s) {
-  const dateStr = currentViewDateStr();
+function setStatus(item, s, dateStr) {
+  dateStr = dateStr || currentViewDateStr();
   if (!state.status[dateStr]) state.status[dateStr] = {};
   if (!s) delete state.status[dateStr][statusKey(item)];
   else state.status[dateStr][statusKey(item)] = s;
   saveState(); renderMain();
 }
-function cycleStatus(item) {
-  const cur = getStatus(item);
+function cycleStatus(item, dateStr) {
+  const cur = getStatus(item, dateStr);
   const next = cur === "" ? "complete" : (cur === "complete" ? "notcomp" : "");
-  setStatus(item, next);
+  setStatus(item, next, dateStr);
 }
 
 // ============================================================================
@@ -3266,11 +3287,15 @@ function renderMain() {
   cleanupStalePlanStatus();
   const todayReal = new Date();
   const viewDate = currentViewDate();
-  const dayOffset = (state.ui && typeof state.ui.dayOffset === "number") ? state.ui.dayOffset : 0;
+  // Effective day-back count for display — reflects BOTH the day-page buttons
+  // and any midnight crossing caused by time-scrubbing, not just the raw
+  // day-page button count, so the label never disagrees with what's shown.
+  const effDayOffset = Math.floor(currentViewAbsMin() / 1440);
   const viewStrDay = viewDate.toLocaleDateString(undefined, { weekday: "long" });
   const viewStrDate = viewDate.toLocaleDateString(undefined, { month: "numeric", day: "numeric" });
   const viewStr = viewStrDay + " " + viewStrDate;
-  const offsetLabel = dayOffset === 0 ? "" : " (viewing " + (dayOffset === -1 ? "1 day back" : Math.abs(dayOffset) + " days back") + ")";
+  const offsetLabel = effDayOffset === 0 ? "" :
+    " (viewing " + Math.abs(effDayOffset) + (Math.abs(effDayOffset) === 1 ? " day" : " days") + (effDayOffset < 0 ? " back" : " ahead") + ")";
   const profileName = (state.settings && state.settings.profileName) ? state.settings.profileName : "";
   const ds = document.getElementById("dateStamp");
   ds.innerHTML = (profileName ? escapeHtml(profileName) + " · " : "") + escapeHtml(viewStr) + escapeHtml(offsetLabel) +
@@ -3318,7 +3343,10 @@ function renderMain() {
   const offset = (state.ui && typeof state.ui.timeOffset === "number") ? state.ui.timeOffset : 0;
   const nowMin = now.getHours() * 60 + now.getMinutes();
   const nowBucket = Math.floor(nowMin / 30) * 30;
-  const centerBucket = (((nowBucket + offset * 60) % 1440) + 1440) % 1440;
+  // centerBucket comes from the SAME combined day+time value used for
+  // currentViewDate(), so the visible hour and the visible date always agree.
+  const viewAbsMin = currentViewAbsMin();
+  const centerBucket = ((viewAbsMin % 1440) + 1440) % 1440;
 
   // Build 9 half-hour columns: -1h to +3h relative to center, center at index 2
   // Desktop keeps the existing -1h..+3h (9-column) window unchanged. Mobile
@@ -3339,13 +3367,12 @@ function renderMain() {
       isNow: tm === nowBucket,
       // A column whose raw (unwrapped) minute value falls outside [0, 1440) has
       // crossed midnight relative to the viewed date — e.g. viewing 10 PM with a
-      // +3h window wraps into "12:30 AM," which is actually tomorrow, not later
-      // tonight. `sched` only holds the single viewed date's items, so matching
-      // by time-of-day alone would wrongly pull in that same date's own early-
-      // morning entries (already hours in the past) and show them as if they
-      // were coming up later today. Wrapped columns are excluded from matching
-      // below instead — a real gap during the wrapped hours, but no wrong data.
-      wrapped: raw < 0 || raw >= 1440
+      // +3h window wraps into "12:30 AM," which is actually the next calendar
+      // day. dayDelta says which adjacent day that column really belongs to
+      // (-1 = previous day, +1 = next day) so its real data can be looked up
+      // and shown, instead of leaving those columns blank.
+      wrapped: raw < 0 || raw >= 1440,
+      dayDelta: raw < 0 ? -1 : (raw >= 1440 ? 1 : 0)
     });
   }
 
@@ -3358,7 +3385,7 @@ function renderMain() {
                    : (offset > 0 ? `Now +${offset}h <span style="color: var(--good); font-size: 14px;">●</span> ±2h`
                                  : `${offset}h ago <span style="color: var(--good); font-size: 14px;">●</span> ±2h`);
     sl.oninput = (e) => { state.ui.timeOffset = parseInt(e.target.value,10); saveState(); renderMain(); };
-    document.getElementById("timeBack").onclick = () => { state.ui.timeOffset = Math.max(-12, (state.ui.timeOffset||0) - 1); saveState(); renderMain(); };
+    document.getElementById("timeBack").onclick = () => { state.ui.timeOffset = Math.max(-168, (state.ui.timeOffset||0) - 1); saveState(); renderMain(); };
     document.getElementById("timeFwd").onclick = () => { state.ui.timeOffset = Math.min(12, (state.ui.timeOffset||0) + 1); saveState(); renderMain(); };
     document.getElementById("timeNow").onclick = () => { state.ui.timeOffset = 0; state.ui.dayOffset = 0; saveState(); renderMain(); };
     const addBtn = document.getElementById("timeAdd");
@@ -3375,26 +3402,45 @@ function renderMain() {
   }
   html += "</tr></thead><tbody>";
 
+  const viewDateStr = currentViewDateStr();
+  const prevDateStr = dateStrPlusDays(viewDateStr, -1);
+  const nextDateStr = dateStrPlusDays(viewDateStr, 1);
   const sched = todaysSchedule();
+  const needsPrevDay = cols.some(c => c.dayDelta === -1);
+  const needsNextDay = cols.some(c => c.dayDelta === 1);
+  const prevSched = needsPrevDay ? scheduleForDate(prevDateStr) : [];
+  const nextSched = needsNextDay ? scheduleForDate(nextDateStr) : [];
+  // Which real schedule array + date string a column's data actually belongs
+  // to — the center day, or an adjacent day if the column wrapped past midnight.
+  function schedForDelta(delta) {
+    return delta === -1 ? prevSched : (delta === 1 ? nextSched : sched);
+  }
+  function dateStrForDelta(delta) {
+    return delta === -1 ? prevDateStr : (delta === 1 ? nextDateStr : viewDateStr);
+  }
   const cats = [...CATEGORY_REGISTRY.filter(c => c.mainRow).map(c => c.id), "Xcheck"].sort();
   for (const cat of cats) {
     const items = sched.filter(s => s.cat === cat);
-    if (items.length === 0) continue;
+    const prevItems = needsPrevDay ? prevSched.filter(s => s.cat === cat) : [];
+    const nextItems = needsNextDay ? nextSched.filter(s => s.cat === cat) : [];
+    if (items.length === 0 && prevItems.length === 0 && nextItems.length === 0) continue;
     html += `<tr data-cat="${cat}"><td class="cat">${cat}</td>`;
     for (let i = 0; i < cols.length; i++) {
       const c = cols[i];
-      const slotItems = c.wrapped ? [] : items.filter(it => {
+      const dayItems = c.dayDelta === -1 ? prevItems : (c.dayDelta === 1 ? nextItems : items);
+      const colDateStr = dateStrForDelta(c.dayDelta);
+      const slotItems = dayItems.filter(it => {
         const tm = timeToMinutes(it.time);
         return tm >= c.totalMin && tm < c.totalMin + 30;
       });
       const cls = (c.isCenter ? "slot current-col" : "slot") + (c.isNow ? " now-col" : "");
-      html += `<td class="${cls}" data-hour="${c.hh}" data-min="${c.mm}" data-cat="${cat}" data-wrapped="${c.wrapped ? "1" : "0"}">`;
+      html += `<td class="${cls}" data-hour="${c.hh}" data-min="${c.mm}" data-cat="${cat}" data-wrapped="${c.wrapped ? "1" : "0"}" data-date="${colDateStr}">`;
       for (const it of slotItems) {
         // Real-time (_log) items never show complete/notcomp — they're always
         // confirmed and shown in their own blue "is-log" color instead.
         // Appointments keep their original manual complete/notcomp behavior
         // (unaffected by the new auto-orange/plan-verification rules).
-        const st = it._log ? "" : (it._appt ? getStatus(it) : getVisualStatus(it, currentViewDateStr()));
+        const st = it._log ? "" : (it._appt ? getStatus(it, colDateStr) : getVisualStatus(it, colDateStr));
         const apptCls = it._appt ? " appt" : "";
         let imminentCls = "";
         if (it._appt) {
@@ -3408,7 +3454,7 @@ function renderMain() {
         let testRes = "";
         let testPillCls = "";
         if (it.cat === "Test") {
-          const entry = getTestEntry(currentViewDateStr(), it.name, it.time);
+          const entry = getTestEntry(colDateStr, it.name, it.time);
           if (entry && entry.readings && entry.readings.length) {
             const b = pickBestReading(it.name, entry.readings);
             testRes = `<div style="font-weight:700; color: var(--good); font-size: 11px; line-height: 1.2; margin-top: 1px;">${escapeHtml(b.value)}${entry.units?' '+escapeHtml(entry.units):''}</div>`;
@@ -3416,7 +3462,7 @@ function renderMain() {
           }
         }
         const noteOnly = parseNoteFromDetail(it.detail);
-        html += `<span class="slot-pill ${st}${apptCls}${imminentCls}${logCls}${newRecur}${testPillCls}" data-key="${escapeAttr(statusKey(it))}" title="${escapeAttr(it.detail||'')}">
+        html += `<span class="slot-pill ${st}${apptCls}${imminentCls}${logCls}${newRecur}${testPillCls}" data-key="${escapeAttr(statusKey(it))}" data-date="${colDateStr}" title="${escapeAttr(it.detail||'')}">
           ${escapeHtml(it.name)}${noteOnly ? ' <span style="opacity:.6">·'+escapeHtml(noteOnly)+'</span>':''}${testRes}
         </span>`;
       }
@@ -3432,10 +3478,11 @@ function renderMain() {
     p.addEventListener("click", (e) => {
       e.stopPropagation();
       const key = p.dataset.key;
-      const item = sched.find(it => statusKey(it) === key);
+      const pillDateStr = p.dataset.date || viewDateStr;
+      const item = schedForDelta(pillDateStr === prevDateStr ? -1 : (pillDateStr === nextDateStr ? 1 : 0)).find(it => statusKey(it) === key);
       if (!item) return;
       if (item.cat === "Test") {
-        openTestResultModal(item); // handles both planned and logged test entries
+        openTestResultModal(item, pillDateStr); // handles both planned and logged test entries
       } else if (item._log) {
         // Real-time entries are already confirmed by their creation — no tap
         // needed, so a tap here is free to do something more useful. If this
@@ -3449,17 +3496,18 @@ function renderMain() {
           showToast("Already logged — right-click (or double-tap) to delete");
         }
       } else {
-        cycleStatus(item);
+        cycleStatus(item, pillDateStr);
       }
     });
     p.addEventListener("contextmenu", (e) => {
       e.preventDefault();
       e.stopPropagation();
       const key = p.dataset.key;
-      const item = sched.find(it => statusKey(it) === key);
+      const pillDateStr = p.dataset.date || viewDateStr;
+      const item = schedForDelta(pillDateStr === prevDateStr ? -1 : (pillDateStr === nextDateStr ? 1 : 0)).find(it => statusKey(it) === key);
       if (!item) return;
       if (item._log) {
-        if (confirm("Delete \"" + item.name + "\" from today's log?")) {
+        if (confirm("Delete \"" + item.name + "\" from " + pillDateStr + "'s log?")) {
           state.logs = (state.logs||[]).filter(l => l.id !== item._logId);
           saveState();
           renderMain();
@@ -3472,8 +3520,9 @@ function renderMain() {
         // actually pulled it from — NOT the `plan` variable above, since that's
         // resolved from local time while scheduleForDate resolves via currentViewDateStr()
         // (UTC-based), and the two can disagree and return different plan objects.
-        const itemDateStr = currentViewDateStr();
-        const planForItem = activePlanForDate(new Date(itemDateStr + "T12:00:00"));
+        // Uses the pill's own resolved date (which may be an adjacent wrapped
+        // day, not just the center-viewed day) so the right day's plan is edited.
+        const planForItem = activePlanForDate(new Date(pillDateStr + "T12:00:00"));
         const idx = planForItem && planForItem.schedule
           ? planForItem.schedule.findIndex(it => it.cat === item.cat && it.time === item.time && it.name === item.name)
           : -1;
@@ -3488,9 +3537,10 @@ function renderMain() {
       e.preventDefault();
       e.stopPropagation();
       const key = p.dataset.key;
-      const item = sched.find(it => statusKey(it) === key);
+      const pillDateStr = p.dataset.date || viewDateStr;
+      const item = schedForDelta(pillDateStr === prevDateStr ? -1 : (pillDateStr === nextDateStr ? 1 : 0)).find(it => statusKey(it) === key);
       if (item && item._log) {
-        if (confirm("Delete \"" + item.name + "\" from today's log?")) {
+        if (confirm("Delete \"" + item.name + "\" from " + pillDateStr + "'s log?")) {
           state.logs = (state.logs||[]).filter(l => l.id !== item._logId);
           saveState();
           renderMain();
@@ -3503,18 +3553,14 @@ function renderMain() {
       const h = parseInt(td.dataset.hour, 10);
       const m = parseInt(td.dataset.min || "0", 10);
       const cat = td.dataset.cat;
+      const cellDateStr = td.dataset.date || viewDateStr;
       let time = String(h).padStart(2,"0") + ":" + String(m).padStart(2,"0");
-      // Clicking a cell ahead of the actual current time (while viewing today)
-      // would otherwise stamp a real-time entry with a time that hasn't
-      // happened yet. Clamp to now; backfilling a past cell today, or any
-      // cell on a different day, is unaffected. A "wrapped" cell (e.g. "12:30 AM"
-      // in a window that runs past midnight) is also really in the future even
-      // though its time string looks small — plain string comparison alone
-      // would miss that, so the wrapped flag from rendering is checked too.
-      const dayOffset = (state.ui && typeof state.ui.dayOffset === "number") ? state.ui.dayOffset : 0;
-      const wrapped = td.dataset.wrapped === "1";
-      if (dayOffset === 0 && (wrapped || time > nowHHMM())) time = nowHHMM();
-      openAddNowFlow({ mode: "log", cat, time });
+      // Clicking a cell ahead of the actual current moment would otherwise
+      // stamp a real-time entry with a time that hasn't happened yet. Clamp
+      // to now only when the cell's own resolved date is really today —
+      // backfilling a past cell (today or any other day) is unaffected.
+      if (cellDateStr === todayDate() && time > nowHHMM()) time = nowHHMM();
+      openAddNowFlow({ mode: "log", cat, time, date: cellDateStr });
     });
   });
 
@@ -6022,8 +6068,8 @@ function renderReadingsInputs(readings, bestValue) {
   });
 }
 
-function openTestResultModal(item) {
-  activeTest = { date: todayDate(), name: item.name, time: item.time, isLog: !!item._log, logId: item._logId, captureMode: !!item._captureMode };
+function openTestResultModal(item, dateStr) {
+  activeTest = { date: dateStr || todayDate(), name: item.name, time: item.time, isLog: !!item._log, logId: item._logId, captureMode: !!item._captureMode };
   // Show "Delete pill" only when this is a log entry (today-only) — not a recurring plan item
   const dp = document.getElementById("trDeletePill");
   if (dp) dp.style.display = activeTest.isLog ? "" : "none";
@@ -6580,6 +6626,7 @@ function openAddNowFlow(opts) {
     originalAmount: "",
     mode: opts.mode || "log",
     time: opts.time || nowHHMM(),
+    date: opts.date || null,
     plan: opts.plan || null,
     captureId: opts.captureId || null,
     captureText: opts.captureText || null
@@ -6674,11 +6721,11 @@ function anPickItem(name, detail) {
     // Log mode: create log entry + open result modal
     state.logs = state.logs || [];
     const logId = "l_" + Date.now();
-    state.logs.push({ id: logId, date: todayDate(), cat: "Test", time, name, detail: "", _addedAt: Date.now() });
+    state.logs.push({ id: logId, date: anSelected.date || todayDate(), cat: "Test", time, name, detail: "", _addedAt: Date.now() });
     saveState();
     renderMain();
     document.getElementById("addNowFlowModal").classList.remove("open");
-    setTimeout(() => openTestResultModal({ cat: "Test", time, name, _log: true, _logId: logId }), 120);
+    setTimeout(() => openTestResultModal({ cat: "Test", time, name, _log: true, _logId: logId }, anSelected.date), 120);
     return;
   }
 
@@ -6757,11 +6804,14 @@ function anSaveEntry() {
       _preSelectedAmount: amount
     });
   } else {
-    // Add to today's one-off log entries
+    // Add to the target day's one-off log entries — normally today, but a
+    // Main-timeline cell click carries through the actual day that cell
+    // belongs to (which can be a past day, or an adjacent day reached by
+    // scrubbing time across midnight).
     state.logs = state.logs || [];
     state.logs.push({
       id: "l_" + Date.now(),
-      date: todayDate(),
+      date: anSelected.date || todayDate(),
       cat, time, name, detail,
       _addedAt: Date.now()
     });
@@ -7069,6 +7119,13 @@ function importData() {
             settings: { ...DEFAULT_STATE.settings, ...(d.settings||{}) },
             ui: { ...DEFAULT_STATE.ui, ...(d.ui||{}) } };
           backupWriteBlocked = false;
+          // Custom categories from the imported file need registering into the
+          // in-memory registry the Intake sidebar/pickers actually read from —
+          // normal category creation does this immediately, but a full state
+          // replace like this skipped it, so imported categories existed in
+          // the saved data but stayed invisible in the UI until a full reload.
+          registerCustomCategories();
+          if (typeof renderCustomCategoryButtons === "function") renderCustomCategoryButtons();
           saveState(); applyTheme();
           showPage("main");
           alert("Imported.");
@@ -7463,7 +7520,7 @@ function wire() {
       const cur = state.ui.timeOffset || 0;
       // Swipe left (dx < 0) → advance +1h; swipe right → back -1h
       const delta = dx < 0 ? 1 : -1;
-      const next = Math.max(-12, Math.min(12, cur + delta));
+      const next = Math.max(-168, Math.min(12, cur + delta));
       if (next === cur) return;
       state.ui.timeOffset = next;
       saveState();
