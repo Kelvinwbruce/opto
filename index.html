@@ -1051,8 +1051,13 @@
 
     <div>
       <div class="card">
-        <h3 class="card-title">Upcoming This Week</h3>
-        <div id="upcoming"></div>
+        <h3 class="card-title">Future <span class="right" id="futureDateLabel">Today</span></h3>
+        <div class="day-slider-inline" style="margin-bottom: 8px;">
+          <button id="futureBack" title="Previous day">−</button>
+          <button id="futureToday" class="day-today-btn" title="Jump to today">Today</button>
+          <button id="futureFwd" title="Next day">+</button>
+        </div>
+        <div id="future"></div>
       </div>
 
       <div class="card">
@@ -1687,7 +1692,7 @@
 // Bump this on every deploy-worthy change — shown in the header and footer so
 // it's obvious at a glance whether a given device (phone vs desktop) has
 // actually picked up the latest deployed version after a reload.
-const APP_VERSION = "v56";
+const APP_VERSION = "v57";
 
 const STORAGE_KEY = "opto_app_v2";
 
@@ -3565,7 +3570,7 @@ function renderMain() {
   });
 
   renderFullDay(sched);
-  renderUpcoming();
+  renderFuture();
   renderInsights();
 }
 
@@ -3642,35 +3647,69 @@ function countScheduleStatus(items, dateStr) {
   return { done, missed, pending: items.length - done - missed, total: items.length };
 }
 
-function renderUpcoming() {
-  const today = new Date(); today.setHours(0,0,0,0);
-  const in7 = new Date(today); in7.setDate(in7.getDate() + 7);
-  const visits = (state.intake.doctorVisits || [])
-    .filter(v => v.date && new Date(v.date) >= today && new Date(v.date) <= in7)
-    .sort((a,b) => a.date.localeCompare(b.date));
+// "Future" card — steps through days (past or future, relative to real today,
+// independent of Main's own day/time-scrub position) showing everything
+// already known to be scheduled for that day: the recurring Plan assigned to
+// that day of week, plus any Doctor Visits dated exactly that day. Doctor
+// Visits stay their own separate Intake category (unchanged) — this just
+// merges the two sources for display. A future Calendar's one-off entries
+// would join this same merge as a third source.
+function renderFuture() {
+  if (!state.ui) state.ui = {};
+  const offset = typeof state.ui.futureDayOffset === "number" ? state.ui.futureDayOffset : 0;
+  const d = new Date();
+  d.setDate(d.getDate() + offset);
+  const dateStr = localDateStr(d);
+  const dayLong = d.toLocaleDateString(undefined, { weekday: "long" });
+  const dateShort = d.toLocaleDateString(undefined, { month: "numeric", day: "numeric" });
 
-  const div = document.getElementById("upcoming");
-  if (visits.length === 0) {
-    div.innerHTML = '<div style="color:var(--text-dim);font-size:12px;">No visits in the next 7 days.</div>';
+  const label = document.getElementById("futureDateLabel");
+  if (label) {
+    const prefix = offset === 0 ? "Today · " : offset === 1 ? "Tomorrow · " : offset === -1 ? "Yesterday · " : "";
+    label.textContent = prefix + dayLong + " " + dateShort;
+  }
+
+  const backBtn = document.getElementById("futureBack");
+  const fwdBtn = document.getElementById("futureFwd");
+  const todayBtn = document.getElementById("futureToday");
+  if (backBtn) backBtn.onclick = () => { state.ui.futureDayOffset = (typeof state.ui.futureDayOffset === "number" ? state.ui.futureDayOffset : 0) - 1; saveState(); renderFuture(); };
+  if (fwdBtn) fwdBtn.onclick = () => { state.ui.futureDayOffset = (typeof state.ui.futureDayOffset === "number" ? state.ui.futureDayOffset : 0) + 1; saveState(); renderFuture(); };
+  if (todayBtn) todayBtn.onclick = () => { state.ui.futureDayOffset = 0; saveState(); renderFuture(); };
+
+  const plan = activePlanForDate(d);
+  const planItems = (plan && plan.schedule ? plan.schedule : []).map(it => ({ cat: it.cat, time: it.time, name: it.name, detail: it.detail || "" }));
+  const visitItems = (state.intake.doctorVisits || []).filter(v => v.date === dateStr).map(v => ({
+    cat: "Appointment",
+    time: v.time || "12:00",
+    name: v.visit + (v.name ? " — " + v.name : ""),
+    detail: v.reason || ""
+  }));
+  const items = [...planItems, ...visitItems].sort((a, b) => (a.time || "").localeCompare(b.time || ""));
+
+  const div = document.getElementById("future");
+  if (!div) return;
+  if (items.length === 0) {
+    div.innerHTML = '<div style="color:var(--text-dim);font-size:12px;">Nothing scheduled.</div>';
     return;
   }
-  let html = "";
-  for (const v of visits) {
-    const d = new Date(v.date);
-    const dayLbl = d.toLocaleDateString(undefined, { weekday: "short" });
-    const dateLbl = d.toLocaleDateString(undefined, { month:"short", day:"numeric" });
-    const imminent = d.getTime() === today.getTime();
-    html += `<div class="upcoming-item${imminent ? ' imminent':''}">
-      <div>
-        <div class="day-label">${dayLbl}</div>
-        <div style="font-size:13px;">${dateLbl}</div>
-      </div>
-      <div>
-        <div class="visit-name">${escapeHtml(v.visit)}${v.name ? ' — '+escapeHtml(v.name):''}</div>
-        <div class="visit-meta">${v.time ? v.time+' · ' : ''}${escapeHtml(v.address || '')} ${v.reason ? '· '+escapeHtml(v.reason):''}</div>
-      </div>
-    </div>`;
+  const hours = {};
+  for (const it of items) {
+    const h = (it.time || "00:00").split(":")[0];
+    if (!hours[h]) hours[h] = [];
+    hours[h].push(it);
   }
+  let html = '<div style="display:grid; grid-template-columns: 60px 1fr; gap:6px; align-items:start;">';
+  for (const h of Object.keys(hours).sort()) {
+    html += `<div style="color:var(--text-dim); font-size:11px; padding-top:4px;">${formatHourLabel(parseInt(h, 10))}</div>`;
+    html += '<div>';
+    for (const it of hours[h]) {
+      html += `<span class="slot-pill" title="${escapeAttr(it.detail || '')}">
+        <span class="dot"></span><strong style="font-weight:600;">${escapeHtml(it.cat)}:</strong> ${escapeHtml(it.name)}${it.detail ? ' &middot; ' + escapeHtml(it.detail) : ''}
+      </span> `;
+    }
+    html += '</div>';
+  }
+  html += '</div>';
   div.innerHTML = html;
 }
 
