@@ -933,7 +933,6 @@
      across all selects so the tinted parent never washes them out */
   .modal-bg select option,
   #addCat option,
-  #qaCat option,
   #vdmTime option,
   #setGoal option,
   select option {
@@ -984,7 +983,7 @@
     <button data-page="capture">🎤 Capture</button>
   </nav>
   <div class="menu-tools">
-    <button id="navAddEdit">+ Quick Add</button>
+    <button id="navAddEdit">+ Add</button>
     <button id="navAnalysis">Analysis</button>
     <button id="navSmart">Smart Recommend</button>
     <button id="navExport" style="background: var(--page-accent-soft); border-color: var(--page-accent);">💾 Backup</button>
@@ -1463,6 +1462,11 @@
     <div id="anStep2" style="display:none;">
       <h3 id="anStep2Title" style="margin-top: 0;">Pick item</h3>
       <div id="anItemList" class="an-item-list"></div>
+      <!-- Deliberately OUTSIDE the scrollable item list, not the last card in
+           it — a long catalog (e.g. Vitamin) can fill the whole visible area
+           with no scroll-hint, making a same-list "+Add new" effectively
+           undiscoverable. Always visible here regardless of list length. -->
+      <button type="button" id="anAddNewItemBtn" style="width: 100%; margin-top: 8px; padding: 10px; border: 1px dashed var(--text-dim); color: var(--text-dim); background: transparent; border-radius: 8px; cursor: pointer; font-weight: 600;">+ Add new…</button>
       <div class="modal-actions">
         <button id="anBack2">← Back to categories</button>
         <button id="anCancel2">Cancel</button>
@@ -1489,6 +1493,17 @@
             <button type="button" class="an-qty-quick" data-qty="2">2</button>
             <button type="button" class="an-qty-quick" data-qty="3">3</button>
           </div>
+        </div>
+      </div>
+      <!-- Only shown when opened via "+ Add" (allowDateTime), not "+ Add Now" —
+           Add Now is deliberately a no-decisions, right-now tool; this is
+           the same engine's backfill-a-past-day variant. -->
+      <div class="modal-row" id="anDayRow" style="display:none;">
+        <label>Day</label>
+        <div class="day-slider-inline">
+          <button type="button" id="anDayBack" title="Previous day">−</button>
+          <span id="anDayLabel" style="min-width: 90px; text-align: center; display: inline-block;">Today</span>
+          <button type="button" id="anDayFwd" title="Next day">+</button>
         </div>
       </div>
       <div class="modal-row" style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
@@ -1625,27 +1640,6 @@
   </div>
 </div>
 
-<div class="modal-bg" id="quickAddModal">
-  <div class="modal">
-    <h3>Quick Log</h3>
-    <div class="modal-row"><label>Category</label><select id="qaCat"></select></div>
-    <div class="modal-row"><label>Item</label><select id="qaItemSelect"></select></div>
-    <div class="modal-row">
-      <label>Day</label>
-      <div class="day-slider-inline">
-        <button type="button" id="qaDayBack" title="Previous day">−</button>
-        <span id="qaDayLabel" style="min-width: 90px; text-align: center; display: inline-block;">Today</span>
-        <button type="button" id="qaDayFwd" title="Next day">+</button>
-      </div>
-    </div>
-    <div class="modal-row"><label>Time</label><input id="qaTime" type="time" /></div>
-    <div class="modal-actions">
-      <button id="qaCancel">Cancel</button>
-      <button id="qaSave" class="primary">Log it</button>
-    </div>
-  </div>
-</div>
-
 <div class="modal-bg" id="testResultModal">
   <div class="modal">
     <h3 id="testResultTitle">Log test result</h3>
@@ -1700,7 +1694,7 @@
 // Bump this on every deploy-worthy change — shown in the header and footer so
 // it's obvious at a glance whether a given device (phone vs desktop) has
 // actually picked up the latest deployed version after a reload.
-const APP_VERSION = "v60";
+const APP_VERSION = "v62";
 
 const STORAGE_KEY = "opto_app_v2";
 
@@ -4767,83 +4761,6 @@ function deleteEditModal() {
   if (document.getElementById("page-main").classList.contains("active")) renderMain();
 }
 
-// Day offset resets to "Today" every time Quick Add is opened — it's a
-// one-off action each use, not a persistent view like Main's timeline.
-let qaDayOffset = 0;
-
-function qaCurrentDate() {
-  const d = new Date();
-  d.setDate(d.getDate() + qaDayOffset);
-  return d;
-}
-
-function qaUpdateDayLabel() {
-  const label = document.getElementById("qaDayLabel");
-  if (!label) return;
-  if (qaDayOffset === 0) { label.textContent = "Today"; return; }
-  const d = qaCurrentDate();
-  const dayShort = d.toLocaleDateString(undefined, { weekday: "short" });
-  const dateShort = d.toLocaleDateString(undefined, { month: "numeric", day: "numeric" });
-  label.textContent = dayShort + " " + dateShort;
-}
-
-// Populates the Item dropdown from the selected category's real catalog
-// (same data Add Now reads), plus an "+ Add new…" option at the end.
-function qaPopulateItems() {
-  const cat = document.getElementById("qaCat").value;
-  const sel = document.getElementById("qaItemSelect");
-  const items = catalogForCategory(cat);
-  sel.innerHTML = items.map(it =>
-    `<option value="${escapeAttr(it.label)}" data-detail="${escapeAttr(it.detail || '')}">${it.favorite ? '★ ' : ''}${escapeHtml(it.label)}</option>`
-  ).join("") + `<option value="__qa_add_new__">+ Add new…</option>`;
-}
-
-// Selecting "+ Add new…" opens the same shared add-item form Add Now uses,
-// with this category already known. On save, the new item joins the
-// category's real catalog (so it's voice-matchable and shows in Intake
-// going forward, not a Quick-Add-only throwaway) and becomes selected.
-function qaHandleItemChange() {
-  const sel = document.getElementById("qaItemSelect");
-  if (sel.value !== "__qa_add_new__") return;
-  const cat = document.getElementById("qaCat").value;
-  document.getElementById("quickAddModal").classList.remove("open");
-  openIntakeAddModal(cat, (newObj) => {
-    document.getElementById("quickAddModal").classList.add("open");
-    qaPopulateItems();
-    document.getElementById("qaItemSelect").value = newObj.name;
-  }, () => {
-    document.getElementById("quickAddModal").classList.add("open");
-    qaPopulateItems();
-  });
-}
-
-function openQuickAddModal() {
-  qaDayOffset = 0;
-  document.getElementById("qaCat").innerHTML = CATEGORIES.map(c =>
-    `<option value="${escapeAttr(c)}">${escapeHtml((categoryDef(c) && categoryDef(c).label) || c)}</option>`
-  ).join("");
-  qaPopulateItems();
-  qaUpdateDayLabel();
-  document.getElementById("qaTime").value = nowHHMM();
-  document.getElementById("quickAddModal").classList.add("open");
-}
-
-function saveQuickAdd() {
-  const sel = document.getElementById("qaItemSelect");
-  const name = sel.value;
-  if (!name || name === "__qa_add_new__") { alert("Pick an item, or add a new one."); return; }
-  const cat = document.getElementById("qaCat").value;
-  const opt = sel.options[sel.selectedIndex];
-  const detail = opt ? (opt.dataset.detail || "") : "";
-  const time = document.getElementById("qaTime").value || nowHHMM();
-  const dateStr = localDateStr(qaCurrentDate());
-  state.logs = state.logs || [];
-  state.logs.push({ id:"l_"+Date.now(), date: dateStr, cat, time, name, detail });
-  saveState();
-  document.getElementById("quickAddModal").classList.remove("open");
-  renderMain();
-}
-
 // ============================================================================
 // QUICK CAPTURE (mobile voice / text / photo capture)
 // Captures go to state.captures[]. Processed manually at desktop later.
@@ -6657,6 +6574,26 @@ function importVitaminCatalog() {
 // ============================================================================
 let anSelected = { cat: null, item: null, originalAmount: "" };
 
+// Day offset for the "+ Add" (backfill) variant of this flow — resets to
+// Today every time the flow opens, same reasoning as Quick Add's own
+// version had: a one-off action each use, not a persistent view.
+let anDayOffset = 0;
+
+function anUpdateDayRow() {
+  const row = document.getElementById("anDayRow");
+  if (!row) return;
+  if (!anSelected.allowDateTime) { row.style.display = "none"; return; }
+  row.style.display = "";
+  const d = new Date();
+  d.setDate(d.getDate() + anDayOffset);
+  anSelected.date = localDateStr(d);
+  const label = document.getElementById("anDayLabel");
+  if (label) {
+    label.textContent = anDayOffset === 0 ? "Today" :
+      d.toLocaleDateString(undefined, { weekday: "short" }) + " " + d.toLocaleDateString(undefined, { month: "numeric", day: "numeric" });
+  }
+}
+
 function openAddNowFlow(opts) {
   opts = opts || {};
   anSelected = {
@@ -6666,10 +6603,12 @@ function openAddNowFlow(opts) {
     mode: opts.mode || "log",
     time: opts.time || nowHHMM(),
     date: opts.date || null,
+    allowDateTime: !!opts.allowDateTime,
     plan: opts.plan || null,
     captureId: opts.captureId || null,
     captureText: opts.captureText || null
   };
+  anDayOffset = 0;
   // Show or hide the capture-context banner
   const ctx = document.getElementById("anCaptureContext");
   if (ctx) {
@@ -6731,24 +6670,22 @@ function anPickCategory(cat) {
   document.getElementById("anStep2Title").textContent = "Pick a " + cat.toLowerCase();
   const items = catalogForCategory(cat);
   const list = document.getElementById("anItemList");
-  const addNewCardHtml = `<div class="an-item-card an-item-card-add" data-add-new="1" style="border-style: dashed; color: var(--text-dim); text-align: center;">+ Add new ${escapeHtml(cat)}…</div>`;
   if (items.length === 0) {
-    list.innerHTML = '<div style="color: var(--text-dim); text-align: center; padding: 20px 10px;">No items in your ' + escapeHtml(cat) + ' catalog yet.</div>' + addNewCardHtml;
+    list.innerHTML = '<div style="color: var(--text-dim); text-align: center; padding: 20px 10px;">No items in your ' + escapeHtml(cat) + ' catalog yet.</div>';
   } else {
     list.innerHTML = items.map(it => `
       <div class="an-item-card" data-name="${escapeAttr(it.label)}" data-detail="${escapeAttr(it.detail||'')}">
         <div class="an-item-name">${it.favorite ? '★ ' : ''}${escapeHtml(it.label)}</div>
         ${it.detail ? '<div class="an-item-detail">' + escapeHtml(it.detail) + '</div>' : ''}
       </div>
-    `).join("") + addNewCardHtml;
+    `).join("");
   }
   list.querySelectorAll(".an-item-card").forEach(card => {
-    if (card.dataset.addNew) {
-      card.onclick = () => anAddNewItemForCategory(cat);
-    } else {
-      card.onclick = () => anPickItem(card.dataset.name, card.dataset.detail);
-    }
+    card.onclick = () => anPickItem(card.dataset.name, card.dataset.detail);
   });
+  const addNewBtn = document.getElementById("anAddNewItemBtn");
+  addNewBtn.textContent = "+ Add new " + cat + "…";
+  addNewBtn.onclick = () => anAddNewItemForCategory(cat);
   anGoToStep(2);
 }
 
@@ -6810,6 +6747,7 @@ function anPickItem(name, detail) {
   document.getElementById("anStep3Title").textContent = (anSelected.mode === "plan" ? "Add to plan: " : "Log: ") + name;
   document.getElementById("anAmountChangeHint").style.display = "none";
   document.querySelectorAll(".an-qty-quick").forEach(b => b.classList.toggle("active", b.dataset.qty === "1"));
+  anUpdateDayRow();
   anGoToStep(3);
 }
 
@@ -7431,7 +7369,7 @@ function wire() {
   document.getElementById("ingredientViewClose").onclick = () => document.getElementById("ingredientViewModal").classList.remove("open");
   document.getElementById("navExport").addEventListener("click", exportData);
   document.getElementById("navImport").addEventListener("click", importData);
-  document.getElementById("navAddEdit").addEventListener("click", openQuickAddModal);
+  document.getElementById("navAddEdit").addEventListener("click", () => openAddNowFlow({ mode: "log", allowDateTime: true }));
   document.getElementById("navAnalysis").addEventListener("click", openAnalysis);
   document.getElementById("navSmart").addEventListener("click", () => {
     showPage("main");
@@ -7476,6 +7414,8 @@ function wire() {
   document.getElementById("anBack2").onclick = () => anGoToStep(1);
   document.getElementById("anBack3").onclick = () => anGoToStep(2);
   document.getElementById("anSave").onclick = anSaveEntry;
+  document.getElementById("anDayBack").onclick = () => { anDayOffset -= 1; anUpdateDayRow(); };
+  document.getElementById("anDayFwd").onclick = () => { anDayOffset = Math.min(0, anDayOffset + 1); anUpdateDayRow(); };
   document.getElementById("anAmount").addEventListener("input", anUpdateAmountHint);
   document.querySelectorAll(".an-qty-quick").forEach(b => {
     b.onclick = () => {
@@ -7489,7 +7429,7 @@ function wire() {
     document.querySelectorAll(".an-qty-quick").forEach(o => o.classList.toggle("active", o.dataset.qty === v));
   });
 
-  ["addItemModal","editItemModal","settingsModal","quickAddModal","analysisModal","testResultModal","quickFoodModal","vitaminDetailModal","addNowFlowModal","intakeAddModal","addCategoryModal"].forEach(id => {
+  ["addItemModal","editItemModal","settingsModal","analysisModal","testResultModal","quickFoodModal","vitaminDetailModal","addNowFlowModal","intakeAddModal","addCategoryModal"].forEach(id => {
     document.getElementById(id).addEventListener("click", (e) => {
       if (e.target.id !== id) return;
       // intakeAddModal needs the same "reopen whoever opened me" handling as
@@ -7530,12 +7470,6 @@ function wire() {
   document.getElementById("editDelete").onclick = deleteEditModal;
   document.getElementById("editSkipToday").onclick = skipTodayEditModal;
   document.getElementById("editCancel").onclick = () => document.getElementById("editItemModal").classList.remove("open");
-  document.getElementById("qaSave").onclick = saveQuickAdd;
-  document.getElementById("qaCancel").onclick = () => document.getElementById("quickAddModal").classList.remove("open");
-  document.getElementById("qaCat").onchange = qaPopulateItems;
-  document.getElementById("qaItemSelect").onchange = qaHandleItemChange;
-  document.getElementById("qaDayBack").onclick = () => { qaDayOffset -= 1; qaUpdateDayLabel(); };
-  document.getElementById("qaDayFwd").onclick = () => { qaDayOffset = Math.min(0, qaDayOffset + 1); qaUpdateDayLabel(); };
   document.getElementById("analysisClose").onclick = () => document.getElementById("analysisModal").classList.remove("open");
   // Capture page wiring
   const micBtn = document.getElementById("captureMicBtn");
