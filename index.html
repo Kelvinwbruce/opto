@@ -1627,10 +1627,17 @@
 
 <div class="modal-bg" id="quickAddModal">
   <div class="modal">
-    <h3>Quick Log (today only)</h3>
+    <h3>Quick Log</h3>
     <div class="modal-row"><label>Category</label><select id="qaCat"></select></div>
-    <div class="modal-row"><label>Item</label><input id="qaItem" type="text" placeholder="Anything — coffee, vitamin, snack…" /></div>
-    <div class="modal-row"><label>Detail</label><input id="qaDetail" type="text" /></div>
+    <div class="modal-row"><label>Item</label><select id="qaItemSelect"></select></div>
+    <div class="modal-row">
+      <label>Day</label>
+      <div class="day-slider-inline">
+        <button type="button" id="qaDayBack" title="Previous day">−</button>
+        <span id="qaDayLabel" style="min-width: 90px; text-align: center; display: inline-block;">Today</span>
+        <button type="button" id="qaDayFwd" title="Next day">+</button>
+      </div>
+    </div>
     <div class="modal-row"><label>Time</label><input id="qaTime" type="time" /></div>
     <div class="modal-actions">
       <button id="qaCancel">Cancel</button>
@@ -1693,7 +1700,7 @@
 // Bump this on every deploy-worthy change — shown in the header and footer so
 // it's obvious at a glance whether a given device (phone vs desktop) has
 // actually picked up the latest deployed version after a reload.
-const APP_VERSION = "v59";
+const APP_VERSION = "v60";
 
 const STORAGE_KEY = "opto_app_v2";
 
@@ -4073,14 +4080,7 @@ function promptRenameCustomCategory(id) {
   }
 }
 
-// When "+ New Category" is opened from inside the "Add to Intake" flow (a
-// capture that didn't match anything), this remembers what to resume —
-// which capture, and whatever the user had already typed as the item name —
-// so creating a category doesn't lose their place. Null for the normal
-// Intake-tab entry point.
-let pendingAddToIntakeResume = null;
-
-// Same idea, for "+ New Category" opened from inside the Add Now / Browse &
+// For "+ New Category" opened from inside the Add Now / Browse &
 // Add category picker (step 1) — remembers the mode/time/plan/capture
 // context so creating a category resumes straight into it instead of losing
 // where the user was. Null for other entry points.
@@ -4100,19 +4100,6 @@ function saveAddCategoryModal() {
   if (!ok) return;
   document.getElementById("addCategoryModal").classList.remove("open");
   const newCatId = name.trim();
-  if (pendingAddToIntakeResume) {
-    const resume = pendingAddToIntakeResume;
-    pendingAddToIntakeResume = null;
-    openAddToIntakeModal(resume.cap);
-    setTimeout(() => {
-      const nameField = document.getElementById("a2iName");
-      if (nameField) nameField.value = resume.name;
-      const btn = Array.from(document.querySelectorAll(".a2i-cat")).find(b => b.dataset.cat === newCatId);
-      if (btn) btn.click();
-    }, 30);
-    showToast('"' + newCatId + '" category added');
-    return;
-  }
   if (pendingAddNowResume) {
     const resume = pendingAddNowResume;
     pendingAddNowResume = null;
@@ -4454,9 +4441,20 @@ function intakeAddFieldHtml(f, idx) {
   return `<div class="modal-row"><label>${escapeHtml(label)}${idx===0?' (required)':''}</label>${inputHtml}</div>`;
 }
 
-function openIntakeAddModal(tabId) {
+// Set (non-null) when openIntakeAddModal is invoked from somewhere other
+// than Intake's own "+ Add Item" button — e.g. from Add Now's or Quick
+// Add's "add new item" option — so this one existing, per-category-field-
+// aware add-item form can be reused everywhere instead of building a
+// separate one for each entry point. saveIntakeAddItem() calls it with the
+// newly-created item instead of its normal renderIntake()/toast behavior.
+let intakeAddCallback = null;
+let intakeAddCancelReopen = null;
+
+function openIntakeAddModal(tabId, onSaved, onCancelReopen) {
   const tab = INTAKE_TABS.find(t => t.id === tabId);
   if (!tab || tab.single) return;
+  intakeAddCallback = onSaved || null;
+  intakeAddCancelReopen = onCancelReopen || null;
   const modal = document.getElementById("intakeAddModal");
   modal.dataset.tabId = tab.id;
   document.getElementById("intakeAddTitle").textContent = "Add " + (INTAKE_ADD_LABELS[tab.id] || tab.label);
@@ -4474,6 +4472,17 @@ function openIntakeAddModal(tabId) {
 
 function closeIntakeAddModal() {
   document.getElementById("intakeAddModal").classList.remove("open");
+}
+
+// Cancel (as opposed to save) — if this add-item form was opened from
+// another flow (Add Now / Quick Add), reopen that flow instead of leaving
+// the user stranded with everything closed.
+function cancelIntakeAddModal() {
+  const reopen = intakeAddCancelReopen;
+  intakeAddCallback = null;
+  intakeAddCancelReopen = null;
+  closeIntakeAddModal();
+  if (reopen) reopen();
 }
 
 function saveIntakeAddItem() {
@@ -4499,8 +4508,15 @@ function saveIntakeAddItem() {
   state.intake[key].push(obj);
   saveState();
   closeIntakeAddModal();
-  renderIntake();
-  showToast((INTAKE_ADD_LABELS[tab.id] || tab.label) + " added");
+  const cb = intakeAddCallback;
+  intakeAddCallback = null;
+  intakeAddCancelReopen = null;
+  if (cb) {
+    cb(obj);
+  } else {
+    renderIntake();
+    showToast((INTAKE_ADD_LABELS[tab.id] || tab.label) + " added");
+  }
 }
 
 function renderPlan() {
@@ -4751,21 +4767,78 @@ function deleteEditModal() {
   if (document.getElementById("page-main").classList.contains("active")) renderMain();
 }
 
+// Day offset resets to "Today" every time Quick Add is opened — it's a
+// one-off action each use, not a persistent view like Main's timeline.
+let qaDayOffset = 0;
+
+function qaCurrentDate() {
+  const d = new Date();
+  d.setDate(d.getDate() + qaDayOffset);
+  return d;
+}
+
+function qaUpdateDayLabel() {
+  const label = document.getElementById("qaDayLabel");
+  if (!label) return;
+  if (qaDayOffset === 0) { label.textContent = "Today"; return; }
+  const d = qaCurrentDate();
+  const dayShort = d.toLocaleDateString(undefined, { weekday: "short" });
+  const dateShort = d.toLocaleDateString(undefined, { month: "numeric", day: "numeric" });
+  label.textContent = dayShort + " " + dateShort;
+}
+
+// Populates the Item dropdown from the selected category's real catalog
+// (same data Add Now reads), plus an "+ Add new…" option at the end.
+function qaPopulateItems() {
+  const cat = document.getElementById("qaCat").value;
+  const sel = document.getElementById("qaItemSelect");
+  const items = catalogForCategory(cat);
+  sel.innerHTML = items.map(it =>
+    `<option value="${escapeAttr(it.label)}" data-detail="${escapeAttr(it.detail || '')}">${it.favorite ? '★ ' : ''}${escapeHtml(it.label)}</option>`
+  ).join("") + `<option value="__qa_add_new__">+ Add new…</option>`;
+}
+
+// Selecting "+ Add new…" opens the same shared add-item form Add Now uses,
+// with this category already known. On save, the new item joins the
+// category's real catalog (so it's voice-matchable and shows in Intake
+// going forward, not a Quick-Add-only throwaway) and becomes selected.
+function qaHandleItemChange() {
+  const sel = document.getElementById("qaItemSelect");
+  if (sel.value !== "__qa_add_new__") return;
+  const cat = document.getElementById("qaCat").value;
+  document.getElementById("quickAddModal").classList.remove("open");
+  openIntakeAddModal(cat, (newObj) => {
+    document.getElementById("quickAddModal").classList.add("open");
+    qaPopulateItems();
+    document.getElementById("qaItemSelect").value = newObj.name;
+  }, () => {
+    document.getElementById("quickAddModal").classList.add("open");
+    qaPopulateItems();
+  });
+}
+
 function openQuickAddModal() {
-  document.getElementById("qaCat").innerHTML = CATEGORIES.map(c => `<option>${c}</option>`).join("");
-  document.getElementById("qaItem").value = "";
-  document.getElementById("qaDetail").value = "";
+  qaDayOffset = 0;
+  document.getElementById("qaCat").innerHTML = CATEGORIES.map(c =>
+    `<option value="${escapeAttr(c)}">${escapeHtml((categoryDef(c) && categoryDef(c).label) || c)}</option>`
+  ).join("");
+  qaPopulateItems();
+  qaUpdateDayLabel();
   document.getElementById("qaTime").value = nowHHMM();
   document.getElementById("quickAddModal").classList.add("open");
 }
+
 function saveQuickAdd() {
-  const name = document.getElementById("qaItem").value.trim();
-  if (!name) return;
+  const sel = document.getElementById("qaItemSelect");
+  const name = sel.value;
+  if (!name || name === "__qa_add_new__") { alert("Pick an item, or add a new one."); return; }
   const cat = document.getElementById("qaCat").value;
-  const detail = document.getElementById("qaDetail").value.trim();
+  const opt = sel.options[sel.selectedIndex];
+  const detail = opt ? (opt.dataset.detail || "") : "";
   const time = document.getElementById("qaTime").value || nowHHMM();
+  const dateStr = localDateStr(qaCurrentDate());
   state.logs = state.logs || [];
-  state.logs.push({ id:"l_"+Date.now(), date: todayDate(), cat, time, name, detail });
+  state.logs.push({ id:"l_"+Date.now(), date: dateStr, cat, time, name, detail });
   saveState();
   document.getElementById("quickAddModal").classList.remove("open");
   renderMain();
@@ -5290,8 +5363,8 @@ function addTranscriptToIntake() {
   speechFinal = "";
   resetTranscriptButtons();
   document.getElementById("captureStatus").textContent = "→ Adding '" + text + "' to Intake…";
-  if (typeof openAddToIntakeModal === "function" && newCap) {
-    openAddToIntakeModal(newCap);
+  if (newCap) {
+    openAddNowFlow({ mode: "capture", captureId: newCap.id, captureText: newCap.text, time: nowHHMM() });
   }
 }
 
@@ -5422,127 +5495,16 @@ function parseCaptureItems(text) {
 // Legacy alias so single-item code still works
 function guessCaptureCategory(text) { return matchOneCaptureItem(text); }
 
-// Quick-add an item to the intake catalog from a capture
+// Quick-add an item to the intake catalog from a capture — routes into the
+// same shared Add Now engine every other "not found, add it" path uses
+// (category picker with "+New" → item picker with "+ Add new" → detail
+// form), instead of the separate one-off modal this used to open.
 function quickAddCaptureToIntake(captureId) {
   const cap = (state.captures || []).find(c => c.id === captureId);
   if (!cap) return;
-  openAddToIntakeModal(cap);
+  openAddNowFlow({ mode: "capture", captureId: cap.id, captureText: cap.text, time: nowHHMM() });
 }
 
-// Inline modal for adding an unmatched capture to the Intake catalog.
-// User picks category, edits name, adds optional detail, saves.
-function openAddToIntakeModal(cap) {
-  const existing = document.getElementById("addToIntakeCapModal");
-  if (existing) existing.remove();
-
-  const bg = document.createElement("div");
-  bg.id = "addToIntakeCapModal";
-  bg.style.cssText = "position:fixed; inset:0; background:rgba(0,0,0,0.65); z-index:9999; display:flex; align-items:center; justify-content:center; padding:20px;";
-
-  // Derived from CATEGORY_REGISTRY so a capture that doesn't match anything
-  // (e.g. "apple" for a custom Fruit category) can still be filed under any
-  // voice-enabled category here, built-in or custom.
-  const cats = CATEGORY_REGISTRY.filter(c => c.voiceEnabled).map(c => ({
-    id: c.id, label: c.id, key: c.stateKey, detailLabel: c.detailLabel, detailField: c.amountField
-  }));
-
-  const box = document.createElement("div");
-  box.style.cssText = "background:var(--panel, #1a1f26); border:1px solid var(--border, #2a2f36); border-radius:12px; padding:20px; max-width:420px; width:100%; color:var(--text, #e5e7eb); max-height:90vh; overflow-y:auto;";
-  box.innerHTML = ''
-    + '<div style="font-size:16px; font-weight:700; margin-bottom:12px;">Add to Intake</div>'
-    + '<div style="font-size:11px; color:var(--text-dim); margin-bottom:4px;">Item name</div>'
-    + '<input id="a2iName" type="text" style="width:100%; padding:10px; font-size:15px; background:var(--panel-2, #22272e); border:1px solid var(--border, #2a2f36); color:var(--text, #e5e7eb); border-radius:8px; margin-bottom:12px;" value="' + (cap.text || "").replace(/"/g,"&quot;") + '" />'
-    + '<div style="font-size:11px; color:var(--text-dim); margin-bottom:4px;">Category</div>'
-    + '<div id="a2iCats" style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:6px; margin-bottom:12px;">'
-    + cats.map(c => '<button type="button" class="a2i-cat" data-cat="' + c.id + '" style="padding:8px 4px; font-size:12px; background:var(--panel-2, #22272e); border:1px solid var(--border, #2a2f36); color:var(--text, #e5e7eb); border-radius:6px; cursor:pointer; font-weight:600;">' + c.label + '</button>').join("")
-    + '<button type="button" id="a2iNewCat" style="padding:8px 4px; font-size:12px; background:transparent; border:1px dashed var(--accent, #6ee7b7); color:var(--accent, #6ee7b7); border-radius:6px; cursor:pointer; font-weight:600;">+ New</button>'
-    + '</div>'
-    + '<div id="a2iDetailWrap" style="display:none;">'
-    + '<div id="a2iDetailLabel" style="font-size:11px; color:var(--text-dim); margin-bottom:4px;">Detail</div>'
-    + '<input id="a2iDetail" type="text" placeholder="optional" style="width:100%; padding:10px; font-size:15px; background:var(--panel-2, #22272e); border:1px solid var(--border, #2a2f36); color:var(--text, #e5e7eb); border-radius:8px; margin-bottom:12px;" />'
-    + '</div>'
-    + '<label style="display:flex; align-items:center; gap:6px; margin-bottom:14px; font-size:12px; color:var(--text-dim);">'
-    + '<input type="checkbox" id="a2iAlsoLog" checked /> Also log to today'
-    + '</label>'
-    + '<div style="display:flex; gap:8px; justify-content:flex-end;">'
-    + '<button id="a2iCancel" type="button" style="padding:9px 16px; font-size:14px; border-radius:8px; border:1px solid var(--border, #2a2f36); background:transparent; color:var(--text, #e5e7eb); font-weight:600;">Cancel</button>'
-    + '<button id="a2iSave" type="button" style="padding:9px 16px; font-size:14px; border-radius:8px; border:none; background:var(--good, #22c55e); color:#0f1419; font-weight:700;">Save</button>'
-    + '</div>';
-
-  bg.appendChild(box);
-  document.body.appendChild(bg);
-
-  let selectedCat = null;
-  const catButtons = box.querySelectorAll(".a2i-cat");
-  catButtons.forEach(btn => {
-    btn.onclick = () => {
-      selectedCat = btn.dataset.cat;
-      catButtons.forEach(b => {
-        b.style.background = "var(--panel-2, #22272e)";
-        b.style.borderColor = "var(--border, #2a2f36)";
-      });
-      btn.style.background = "var(--good, #22c55e)";
-      btn.style.borderColor = "var(--good, #22c55e)";
-      btn.style.color = "#0f1419";
-      // Show detail field with the right label
-      const catDef = cats.find(c => c.id === selectedCat);
-      const wrap = document.getElementById("a2iDetailWrap");
-      const lbl = document.getElementById("a2iDetailLabel");
-      if (wrap) wrap.style.display = "";
-      if (lbl && catDef) lbl.textContent = catDef.detailLabel + " (optional)";
-    };
-  });
-
-  const cleanup = () => { const el = document.getElementById("addToIntakeCapModal"); if (el) el.remove(); };
-  document.getElementById("a2iCancel").onclick = cleanup;
-  bg.addEventListener("click", (e) => { if (e.target === bg) cleanup(); });
-
-  document.getElementById("a2iNewCat").onclick = () => {
-    pendingAddToIntakeResume = { cap, name: document.getElementById("a2iName").value };
-    cleanup();
-    openAddCategoryModal();
-  };
-
-  document.getElementById("a2iSave").onclick = () => {
-    if (!selectedCat) { alert("Pick a category first."); return; }
-    const catDef = cats.find(c => c.id === selectedCat);
-    const name = document.getElementById("a2iName").value.trim();
-    if (!name) { alert("Item name required."); return; }
-    const detail = document.getElementById("a2iDetail").value.trim();
-    const alsoLog = document.getElementById("a2iAlsoLog").checked;
-
-    // Add to intake catalog
-    if (!state.intake[catDef.key]) state.intake[catDef.key] = [];
-    const newItem = { name: name };
-    if (detail) newItem[catDef.detailField] = detail;
-    state.intake[catDef.key].push(newItem);
-
-    // Optionally log to today
-    if (alsoLog) {
-      state.logs = state.logs || [];
-      state.logs.push({
-        id: "l_" + Date.now(),
-        date: todayDate(),
-        cat: selectedCat,
-        time: nowHHMM(),
-        name: name,
-        detail: detail || "",
-        _addedAt: Date.now()
-      });
-    }
-
-    // Mark the capture as processed (already handled)
-    cap.processed = true;
-    cap.processedAt = new Date().toISOString();
-
-    saveState();
-    cleanup();
-    if (typeof renderCaptureList === "function") renderCaptureList();
-    if (typeof renderMain === "function") renderMain();
-    if (typeof showToast === "function") showToast("✓ Added " + name + " to " + catDef.label + (alsoLog ? " + logged" : ""));
-    speak("Added " + name + " to " + catDef.label);
-  };
-}
 
 // Accept multiple items from a single capture (each with its own qty)
 function acceptMultiCapture(captureId) {
@@ -6769,20 +6731,42 @@ function anPickCategory(cat) {
   document.getElementById("anStep2Title").textContent = "Pick a " + cat.toLowerCase();
   const items = catalogForCategory(cat);
   const list = document.getElementById("anItemList");
+  const addNewCardHtml = `<div class="an-item-card an-item-card-add" data-add-new="1" style="border-style: dashed; color: var(--text-dim); text-align: center;">+ Add new ${escapeHtml(cat)}…</div>`;
   if (items.length === 0) {
-    list.innerHTML = '<div style="color: var(--text-dim); text-align: center; padding: 30px;">No items in your ' + cat + ' catalog yet.<br>Go to Intake → ' + cat + ' to add some, then come back.</div>';
+    list.innerHTML = '<div style="color: var(--text-dim); text-align: center; padding: 20px 10px;">No items in your ' + escapeHtml(cat) + ' catalog yet.</div>' + addNewCardHtml;
   } else {
     list.innerHTML = items.map(it => `
       <div class="an-item-card" data-name="${escapeAttr(it.label)}" data-detail="${escapeAttr(it.detail||'')}">
         <div class="an-item-name">${it.favorite ? '★ ' : ''}${escapeHtml(it.label)}</div>
         ${it.detail ? '<div class="an-item-detail">' + escapeHtml(it.detail) + '</div>' : ''}
       </div>
-    `).join("");
-    list.querySelectorAll(".an-item-card").forEach(card => {
-      card.onclick = () => anPickItem(card.dataset.name, card.dataset.detail);
-    });
+    `).join("") + addNewCardHtml;
   }
+  list.querySelectorAll(".an-item-card").forEach(card => {
+    if (card.dataset.addNew) {
+      card.onclick = () => anAddNewItemForCategory(cat);
+    } else {
+      card.onclick = () => anPickItem(card.dataset.name, card.dataset.detail);
+    }
+  });
   anGoToStep(2);
+}
+
+// Opens the shared "add new catalog item" form (the same one Intake's own
+// "+ Add Item" uses) with this category already known, so every category's
+// own real field set is asked for correctly rather than a generic one.
+// On save, proceeds into the normal item-detail step with the new item
+// selected; on cancel, returns to this category's item picker.
+function anAddNewItemForCategory(cat) {
+  document.getElementById("addNowFlowModal").classList.remove("open");
+  openIntakeAddModal(cat, (newObj) => {
+    document.getElementById("addNowFlowModal").classList.add("open");
+    const amtField = AN_AMOUNT_FIELD_MAP[cat];
+    anPickItem(newObj.name, amtField ? (newObj[amtField] || "") : "");
+  }, () => {
+    document.getElementById("addNowFlowModal").classList.add("open");
+    anPickCategory(cat);
+  });
 }
 
 function anPickItem(name, detail) {
@@ -7507,20 +7491,25 @@ function wire() {
 
   ["addItemModal","editItemModal","settingsModal","quickAddModal","analysisModal","testResultModal","quickFoodModal","vitaminDetailModal","addNowFlowModal","intakeAddModal","addCategoryModal"].forEach(id => {
     document.getElementById(id).addEventListener("click", (e) => {
-      if (e.target.id === id) e.target.classList.remove("open");
+      if (e.target.id !== id) return;
+      // intakeAddModal needs the same "reopen whoever opened me" handling as
+      // its Cancel button, not just a plain close, when opened from Add Now
+      // or Quick Add's "add new item" option.
+      if (id === "intakeAddModal") cancelIntakeAddModal();
+      else e.target.classList.remove("open");
     });
   });
-  document.getElementById("intakeAddCancel").onclick = closeIntakeAddModal;
+  document.getElementById("intakeAddCancel").onclick = cancelIntakeAddModal;
   document.getElementById("addCatCancel").onclick = () => {
     document.getElementById("addCategoryModal").classList.remove("open");
-    if (pendingAddToIntakeResume) {
-      const resume = pendingAddToIntakeResume;
-      pendingAddToIntakeResume = null;
-      openAddToIntakeModal(resume.cap);
-      setTimeout(() => {
-        const nameField = document.getElementById("a2iName");
-        if (nameField) nameField.value = resume.name;
-      }, 30);
+    // "+New" from Add Now's category picker hides addNowFlowModal first —
+    // cancelling category creation should reopen it (at step 1) instead of
+    // leaving the user stranded with nothing open.
+    if (pendingAddNowResume) {
+      const resume = pendingAddNowResume;
+      pendingAddNowResume = null;
+      document.getElementById("addNowFlowModal").classList.add("open");
+      anGoToStep(1);
     }
   };
   document.getElementById("addCatSave").onclick = saveAddCategoryModal;
@@ -7543,6 +7532,10 @@ function wire() {
   document.getElementById("editCancel").onclick = () => document.getElementById("editItemModal").classList.remove("open");
   document.getElementById("qaSave").onclick = saveQuickAdd;
   document.getElementById("qaCancel").onclick = () => document.getElementById("quickAddModal").classList.remove("open");
+  document.getElementById("qaCat").onchange = qaPopulateItems;
+  document.getElementById("qaItemSelect").onchange = qaHandleItemChange;
+  document.getElementById("qaDayBack").onclick = () => { qaDayOffset -= 1; qaUpdateDayLabel(); };
+  document.getElementById("qaDayFwd").onclick = () => { qaDayOffset = Math.min(0, qaDayOffset + 1); qaUpdateDayLabel(); };
   document.getElementById("analysisClose").onclick = () => document.getElementById("analysisModal").classList.remove("open");
   // Capture page wiring
   const micBtn = document.getElementById("captureMicBtn");
