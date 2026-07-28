@@ -1331,6 +1331,16 @@
       </div>
     </div>
     <hr style="border-color: var(--border); margin: 14px 0;" />
+    <div class="modal-row" style="background: var(--panel-2); padding: 10px; border-radius: 8px; border-left: 3px solid var(--accent);">
+      <label>🧹 Catalog cleanup</label>
+      <div style="display: flex; gap: 6px; flex-wrap: wrap; margin-top: 4px;">
+        <button id="setCleanBlankRows" type="button">Remove blank catalog rows…</button>
+      </div>
+      <div style="font-size: 11px; color: var(--text-dim); margin-top: 4px; line-height: 1.4;">
+        Scans every Intake category for rows with no name (usually left behind by clearing a name field before this was fixed to auto-remove the row) and removes them, after showing you exactly what it found.
+      </div>
+    </div>
+    <hr style="border-color: var(--border); margin: 14px 0;" />
     <div class="modal-row">
       <label>Distribution / sharing</label>
       <button id="setMakeCopy" type="button">Create personalized copy…</button>
@@ -1442,15 +1452,6 @@
     <div id="anStep1">
       <h3 style="margin-top: 0;">What do you want to add?</h3>
       <div class="an-cat-grid">
-        <button class="an-cat-card" data-cat="Drink">💧<br>Drink</button>
-        <button class="an-cat-card" data-cat="Vitamin">💊<br>Vitamin</button>
-        <button class="an-cat-card" data-cat="Supplement">🥄<br>Supplement</button>
-        <button class="an-cat-card" data-cat="Medication">💉<br>Medication</button>
-        <button class="an-cat-card" data-cat="Meal">🍽️<br>Meal</button>
-        <button class="an-cat-card" data-cat="Food">🥘<br>Food</button>
-        <button class="an-cat-card" data-cat="Snack">🍿<br>Snack</button>
-        <button class="an-cat-card" data-cat="Test">🩺<br>Test</button>
-        <button class="an-cat-card" data-cat="Exercise">🏋️<br>Exercise</button>
         <button type="button" id="anNewCatBtn" class="an-cat-card" style="border-style: dashed; color: var(--text-dim);">+<br>New</button>
       </div>
       <div class="modal-actions">
@@ -1692,7 +1693,7 @@
 // Bump this on every deploy-worthy change — shown in the header and footer so
 // it's obvious at a glance whether a given device (phone vs desktop) has
 // actually picked up the latest deployed version after a reload.
-const APP_VERSION = "v57";
+const APP_VERSION = "v58";
 
 const STORAGE_KEY = "opto_app_v2";
 
@@ -4130,6 +4131,34 @@ function saveAddCategoryModal() {
 // list on top of the user's own curated items.
 const FAVORITES_CATS = ["Vitamin", "Supplement", "Snack"];
 
+// Finds (or removes, when dryRun is false) catalog rows across every Intake
+// category whose primary identifying field (fields[0] — usually "name",
+// but e.g. "visit" for Doctor Visits) is blank. These are pre-existing
+// ghost rows from before clearing a name field was made to auto-remove the
+// row (see the "change" handler in renderIntake) — this is the one-time
+// cleanup for rows that already existed before that fix.
+function findOrRemoveBlankCatalogRows(dryRun) {
+  const perTab = [];
+  let total = 0;
+  for (const tab of INTAKE_TABS) {
+    if (tab.single) continue;
+    const key = TAB_TO_STATE_KEY[tab.id];
+    const arr = state.intake[key];
+    if (!Array.isArray(arr) || arr.length === 0) continue;
+    const primaryField = tab.fields[0];
+    const blankCount = arr.filter(row => !(row[primaryField] || "").toString().trim()).length;
+    if (blankCount > 0) {
+      perTab.push(tab.label + ": " + blankCount);
+      total += blankCount;
+      if (!dryRun) {
+        state.intake[key] = arr.filter(row => (row[primaryField] || "").toString().trim() !== "");
+      }
+    }
+  }
+  if (!dryRun && total > 0) saveState();
+  return { total, perTab };
+}
+
 function renderIntake() {
   if (!state.intake.symptoms) state.intake.symptoms = [];
   if (!state.intake.meals) state.intake.meals = [];
@@ -4350,6 +4379,15 @@ function renderIntake() {
     state.intake[key][r][inp.dataset.field] = inp.value;
     if (inp.dataset.field === "timeOfDay") {
       inp.setAttribute("data-tod", inp.value);
+    }
+    // Clearing the row's primary identifying field (usually "name") is
+    // treated as deleting the whole row, not left behind as a blank ghost
+    // entry — matches what the explicit "×" delete button already does.
+    if (inp.dataset.field === tab.fields[0] && !inp.value.trim()) {
+      state.intake[key].splice(r, 1);
+      saveState();
+      renderIntake();
+      return;
     }
     saveState();
   });
@@ -6695,19 +6733,23 @@ function anGoToStep(s) {
   document.getElementById("anStep3").style.display = (s === 3 ? "" : "none");
 }
 
-// Injects a button for each custom category into the Add Now category picker
-// (the built-in ones are static HTML, wired once in wire()). Safe to call
-// repeatedly — clears any previously-injected buttons first.
+// Builds every card in the Add Now category picker (built-in AND custom
+// categories alike) from CATEGORY_REGISTRY, sorted alphabetically by id so
+// the grid is scannable regardless of how many custom categories exist —
+// previously built-ins were static HTML in a fixed order with customs just
+// tacked on at the end in creation order. Safe to call repeatedly — clears
+// any previously-injected buttons first. "+ New" always stays last.
 function renderCustomCategoryButtons() {
   const grid = document.querySelector("#anStep1 .an-cat-grid");
   if (!grid) return;
-  grid.querySelectorAll(".an-cat-card-custom").forEach(b => b.remove());
+  grid.querySelectorAll(".an-cat-card:not(#anNewCatBtn)").forEach(b => b.remove());
   const newCatBtn = document.getElementById("anNewCatBtn");
-  for (const c of (state.intake.customCategories || [])) {
+  const cats = CATEGORY_REGISTRY.filter(c => c.addNow).sort((a, b) => a.id.localeCompare(b.id));
+  for (const c of cats) {
     const btn = document.createElement("button");
-    btn.className = "an-cat-card an-cat-card-custom";
+    btn.className = "an-cat-card";
     btn.dataset.cat = c.id;
-    btn.innerHTML = escapeHtml(c.icon || "🏷️") + "<br>" + escapeHtml(c.label);
+    btn.innerHTML = escapeHtml(c.icon || "🏷️") + "<br>" + escapeHtml(c.id);
     btn.onclick = () => anPickCategory(c.id);
     // Insert before "+ New" (rather than appendChild) so it stays last.
     if (newCatBtn) grid.insertBefore(btn, newCatBtn); else grid.appendChild(btn);
@@ -7313,6 +7355,16 @@ function wire() {
     const count = (state.logs || []).filter(l => l._syncTest).length;
     if (count === 0) { alert("No test entries to clear."); return; }
     if (confirm("Remove all " + count + " sync test entries?")) clearSyncTestEntries();
+  };
+  document.getElementById("setCleanBlankRows").onclick = () => {
+    const preview = findOrRemoveBlankCatalogRows(true);
+    if (preview.total === 0) { alert("No blank rows found — your catalogs are clean."); return; }
+    const msg = "Found " + preview.total + " blank row(s):\n\n" + preview.perTab.join("\n") + "\n\nRemove them? This can't be undone (though anything with real data in other fields but a blank name will be removed too — if in doubt, back up first).";
+    if (confirm(msg)) {
+      findOrRemoveBlankCatalogRows(false);
+      renderIntake();
+      alert("Removed.");
+    }
   };
   // Phone sync wiring
   const psConn = document.getElementById("setPhoneSyncConnect");
