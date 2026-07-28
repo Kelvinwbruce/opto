@@ -451,8 +451,13 @@
       display: flex; align-items: center; gap: 8px; margin-bottom: 8px;
     }
     .mobile-plan-row #planApplied {
+      /* Centered — was left-aligned with a compensating left-padding from
+         when #timeAdd used to share this row (evacuated to the toolbar
+         grid instead as of v65); now #planApplied is this row's only
+         content, so it should just center like the desktop version does
+         (Kelvin, 2026-07-28). */
       flex: 1; font-size: 20px; font-weight: 700; color: var(--page-accent);
-      letter-spacing: 0.02em; text-align: left; padding-left: 12px;
+      letter-spacing: 0.02em; text-align: center;
     }
     .plan-row {
       display: flex; align-items: center; gap: 6px;
@@ -1768,7 +1773,7 @@
 // Bump this on every deploy-worthy change — shown in the header and footer so
 // it's obvious at a glance whether a given device (phone vs desktop) has
 // actually picked up the latest deployed version after a reload.
-const APP_VERSION = "v67";
+const APP_VERSION = "v68";
 
 const STORAGE_KEY = "opto_app_v2";
 
