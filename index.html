@@ -1693,7 +1693,7 @@
 // Bump this on every deploy-worthy change — shown in the header and footer so
 // it's obvious at a glance whether a given device (phone vs desktop) has
 // actually picked up the latest deployed version after a reload.
-const APP_VERSION = "v58";
+const APP_VERSION = "v59";
 
 const STORAGE_KEY = "opto_app_v2";
 
@@ -6734,22 +6734,30 @@ function anGoToStep(s) {
 }
 
 // Builds every card in the Add Now category picker (built-in AND custom
-// categories alike) from CATEGORY_REGISTRY, sorted alphabetically by id so
-// the grid is scannable regardless of how many custom categories exist —
-// previously built-ins were static HTML in a fixed order with customs just
-// tacked on at the end in creation order. Safe to call repeatedly — clears
-// any previously-injected buttons first. "+ New" always stays last.
+// categories alike) from CATEGORY_REGISTRY, sorted alphabetically by LABEL
+// (the display name) so the grid is scannable regardless of how many custom
+// categories exist — previously built-ins were static HTML in a fixed order
+// with customs just tacked on at the end in creation order.
+// Sorts/displays by `label`, not `id` — for a renamed custom category these
+// can be completely different (rename only ever changes the label, never
+// the internal id, so old logged entries never break) — e.g. a category
+// renamed from "ToDo" to "Contacts" keeps id:"ToDo" forever. Displaying or
+// sorting by id would show/alphabetize it as "ToDo," not the name the user
+// actually sees everywhere else. `dataset.cat` still uses `c.id`, since
+// that's the real internal key the rest of the app looks items up by.
+// Safe to call repeatedly — clears any previously-injected buttons first.
+// "+ New" always stays last.
 function renderCustomCategoryButtons() {
   const grid = document.querySelector("#anStep1 .an-cat-grid");
   if (!grid) return;
   grid.querySelectorAll(".an-cat-card:not(#anNewCatBtn)").forEach(b => b.remove());
   const newCatBtn = document.getElementById("anNewCatBtn");
-  const cats = CATEGORY_REGISTRY.filter(c => c.addNow).sort((a, b) => a.id.localeCompare(b.id));
+  const cats = CATEGORY_REGISTRY.filter(c => c.addNow).sort((a, b) => (a.label || a.id).localeCompare(b.label || b.id));
   for (const c of cats) {
     const btn = document.createElement("button");
     btn.className = "an-cat-card";
     btn.dataset.cat = c.id;
-    btn.innerHTML = escapeHtml(c.icon || "🏷️") + "<br>" + escapeHtml(c.id);
+    btn.innerHTML = escapeHtml(c.icon || "🏷️") + "<br>" + escapeHtml(c.label || c.id);
     btn.onclick = () => anPickCategory(c.id);
     // Insert before "+ New" (rather than appendChild) so it stays last.
     if (newCatBtn) grid.insertBefore(btn, newCatBtn); else grid.appendChild(btn);
