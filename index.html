@@ -218,12 +218,24 @@
   .main-grid { display: grid; grid-template-columns: 1fr 320px; gap: 14px; }
   @media (max-width: 1000px) { .main-grid { grid-template-columns: 1fr; } }
 
-  .plan-row { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; flex-wrap: nowrap; }
+  /* Desktop: true 3-column center — .plan-indicator sits in the middle
+     column, which stays at the row's real visual center regardless of
+     .plan-row-left/.plan-row-right having different widths (unlike
+     flex:1 + text-align:center, which only centers within its OWN leftover
+     space — off-center whenever the two flanks differ). Mobile overrides
+     .plan-row back to a plain flex row below (both wrappers evacuate their
+     children there anyway, per moveControlsForMobile()). */
+  .plan-row {
+    display: grid; grid-template-columns: 1fr auto 1fr; align-items: center;
+    gap: 6px; margin-bottom: 4px;
+  }
+  .plan-row-left { display: flex; align-items: center; gap: 6px; justify-self: start; min-width: 0; }
+  .plan-row-right { display: flex; align-items: center; gap: 6px; justify-self: end; }
   .plan-row .day-pill { width: 132px; max-width: 145px; flex-shrink: 0; text-align: center; }
   .plan-row .plan-indicator {
-    flex: 1; text-align: center; font-size: 18px; font-weight: 700;
+    text-align: center; font-size: 18px; font-weight: 700;
     color: var(--page-accent); padding: 0;
-    margin: 0; letter-spacing: 0.02em; line-height: 1.2;
+    margin: 0; letter-spacing: 0.02em; line-height: 1.2; white-space: nowrap;
   }
   .day-slider-inline {
     display: flex; align-items: center; gap: 4px;
@@ -1057,18 +1069,27 @@
              viewport. Empty/unused on desktop. -->
         <div class="mobile-plan-row" id="mobilePlanRow"></div>
         <div class="plan-row">
-          <div class="day-pill" id="dayPill">Sunday</div>
-          <div class="day-slider-inline">
-            <button id="dayBack" title="Previous day (or swipe timeline right)">−</button>
-            <button id="dayToday" class="day-today-btn" title="Jump to today">Today</button>
-            <button id="dayFwd" title="Next day (or swipe timeline left)">+</button>
+          <!-- Left/right wrapped so "Plan: X view" can sit in a true center
+               grid column, unaffected by the two sides having different
+               widths — a flex flex:1 box centers text within ITS OWN
+               leftover space, which isn't the same as the row's true visual
+               center when the flanks are asymmetric (Kelvin, 2026-07-28). -->
+          <div class="plan-row-left">
+            <div class="day-pill" id="dayPill">Sunday</div>
+            <div class="day-slider-inline">
+              <button id="dayBack" title="Previous day (or swipe timeline right)">−</button>
+              <button id="dayToday" class="day-today-btn" title="Jump to today">Today</button>
+              <button id="dayFwd" title="Next day (or swipe timeline left)">+</button>
+            </div>
           </div>
           <div class="plan-indicator" id="planApplied">Plan: —</div>
           <!-- Native/desktop home for these two — moveControlsForMobile()
                relocates them into the toolbar's .menu-tools-grid on mobile
                instead (stacked there, matching Theme/Settings sizing). -->
-          <button id="navAddEdit">+ Add</button>
-          <button id="timeAdd" class="add-now-badge" title="Add an item for right now">+ Add Now</button>
+          <div class="plan-row-right">
+            <button id="navAddEdit">+ Add</button>
+            <button id="timeAdd" class="add-now-badge" title="Add an item for right now">+ Add Now</button>
+          </div>
         </div>
         <div class="time-bar">
           <div class="now-pill" id="nowPill">--:--</div>
@@ -1747,7 +1768,7 @@
 // Bump this on every deploy-worthy change — shown in the header and footer so
 // it's obvious at a glance whether a given device (phone vs desktop) has
 // actually picked up the latest deployed version after a reload.
-const APP_VERSION = "v66";
+const APP_VERSION = "v67";
 
 const STORAGE_KEY = "opto_app_v2";
 
@@ -7264,7 +7285,22 @@ function moveControlsForMobile() {
       dayPill.parentNode.insertBefore(slots.timeNow.el, dayPill.nextSibling);
     }
   } else {
-    ["planApplied", "navAddEdit", "timeAdd", "timeNow"].forEach(key => {
+    // #planApplied's home (.plan-row) now also permanently contains
+    // .plan-row-right (added 2026-07-28, for true center-column layout) —
+    // plain appendChild would put planApplied AFTER that wrapper (wrong:
+    // Add/Add Now would land before "Plan: X view" instead of after it).
+    // .plan-row-right itself never moves, so it's a safe anchor to restore
+    // planApplied to its correct middle position regardless of call order.
+    const planRowRight = document.querySelector(".plan-row-right");
+    const pa = slots.planApplied;
+    if (pa && pa.el.parentNode !== pa.parent) {
+      if (planRowRight && planRowRight.parentNode === pa.parent) {
+        pa.parent.insertBefore(pa.el, planRowRight);
+      } else {
+        pa.parent.appendChild(pa.el);
+      }
+    }
+    ["navAddEdit", "timeAdd", "timeNow"].forEach(key => {
       const s = slots[key];
       if (s && s.el.parentNode !== s.parent) s.parent.appendChild(s.el);
     });
