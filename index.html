@@ -480,8 +480,13 @@
     .menu-tools-grid #navAddEdit,
     .menu-tools-grid #timeAdd {
       grid-column: 4;
-      border-radius: 8px; padding: 6px 4px; font-size: 11px; font-weight: 700;
+      border-radius: 8px; padding: 6px 4px; font-size: 13px; font-weight: 800;
       display: flex; align-items: center; justify-content: center;
+      /* Explicit, identical color for both — same variable both already
+         used, but stated directly here so there's no ambiguity about the
+         two matching exactly (Kelvin's request, 2026-07-28). */
+      background: var(--page-accent-2, var(--accent-2)); color: #0f1419;
+      border: none;
     }
     .menu-tools-grid #navAddEdit { grid-row: 1; }
     .menu-tools-grid #timeAdd { grid-row: 2; }
@@ -1742,7 +1747,7 @@
 // Bump this on every deploy-worthy change — shown in the header and footer so
 // it's obvious at a glance whether a given device (phone vs desktop) has
 // actually picked up the latest deployed version after a reload.
-const APP_VERSION = "v65";
+const APP_VERSION = "v66";
 
 const STORAGE_KEY = "opto_app_v2";
 
