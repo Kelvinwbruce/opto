@@ -148,20 +148,25 @@
     padding: 6px 10px; font-size: 12px; cursor: pointer;
   }
   .menu-tools button:hover { color: var(--text); background: var(--panel-2); }
-  /* 6 utility buttons as a 3-col/2-row grid on the left, freeing up a taller,
-     more prominent "+Add" button on the right instead of it being just one
-     more button in a wrapping row (Kelvin's request, 2026-07-28). */
+  /* 6 utility buttons as a 3-col/2-row grid — all the same plain style now
+     (Backup used to be highlighted green; Kelvin asked why and wanted them
+     uniform, 2026-07-28). #navAddEdit/#timeAdd live in .plan-row on desktop
+     (see below) — moveControlsForMobile() relocates them into THIS grid on
+     mobile instead, at which point it becomes 4 columns (see mobile block). */
   .menu-tools-grid {
     display: grid; grid-template-columns: repeat(3, 1fr); grid-auto-rows: 1fr;
     gap: 6px; flex: 1 1 auto; min-width: 0;
   }
   .menu-tools-grid button { width: 100%; }
-  .menu-tools-add {
-    flex: 0 0 auto; min-width: 84px;
-    font-size: 15px; font-weight: 700;
-    background: var(--page-accent-soft); border-color: var(--page-accent);
-    color: var(--text);
+  /* Desktop home: a pill/badge matching #timeAdd's existing "+Add Now" style
+     (same blue), sitting beside it in .plan-row. Mobile overrides this back
+     to a plain rectangular grid-button look — see the mobile breakpoint. */
+  #navAddEdit {
+    background: var(--page-accent-2, var(--accent-2)); color: #0f1419;
+    padding: 6px 14px; border-radius: 999px; font-size: 13px; font-weight: 700;
+    border: none; cursor: pointer; flex-shrink: 0;
   }
+  #navAddEdit:hover { filter: brightness(1.08); }
 
   /* INPUTS */
   input, select, textarea, button {
@@ -419,6 +424,10 @@
   }
   .add-now-badge:hover { filter: brightness(1.08); }
   .now-badge:hover { filter: brightness(1.05); }
+  /* Desktop: with #timeAdd moved out of .time-slider into .plan-row (beside
+     #navAddEdit), #timeNow is the last thing left in .time-slider — center
+     it in the space that frees up rather than letting it hug one edge. */
+  #timeNow { margin: 0 auto; }
 
   /* Mobile Main-page layout — desktop is completely untouched above 800px. */
   @media (max-width: 800px) {
@@ -433,7 +442,6 @@
       flex: 1; font-size: 20px; font-weight: 700; color: var(--page-accent);
       letter-spacing: 0.02em; text-align: left; padding-left: 12px;
     }
-    .mobile-plan-row #timeAdd { flex-shrink: 0; margin-left: auto; margin-right: 32px; }
     .plan-row {
       display: flex; align-items: center; gap: 6px;
     }
@@ -446,10 +454,6 @@
       background: var(--page-accent-2, var(--accent-2));
     }
     .now-badge { padding: 7px 14px; font-size: 15px; }
-    #timeAdd.add-now-badge {
-      display: flex; align-items: center; justify-content: center;
-      padding: 7px 10px; font-size: 14px;
-    }
     .time-slider { margin-left: 4px; margin-top: 2px; }
     .time-slider .range-label { display: none; }
     .time-slider button#timeBack, .time-slider button#timeFwd {
@@ -457,7 +461,30 @@
     }
     nav.pages { width: 100%; justify-content: space-between; }
     .menu-tools { width: 100%; justify-content: space-between; }
-    #navAnalysis { padding: 6px 16px; font-size: 13px; }
+    #navAnalysis { padding: 6px 12px; font-size: 13px; }
+    /* #navAddEdit/#timeAdd relocate here (moveControlsForMobile()) — 4th
+       column, stacked (Add on top, Add Now below), matching Theme/Settings'
+       size rather than staying pill-shaped/oversized, colored blue to stand
+       out (Kelvin's request, 2026-07-28). */
+    .menu-tools-grid { grid-template-columns: repeat(4, 1fr); grid-template-rows: repeat(2, 1fr); gap: 5px; }
+    .menu-tools-grid button { padding: 6px 4px; font-size: 11px; }
+    /* Explicit placement, not DOM order — otherwise the browser's default
+       row-major auto-flow interleaves navAddEdit/timeAdd into the utility
+       buttons' own rows instead of keeping them a distinct 4th column. */
+    #navAnalysis { grid-column: 1; grid-row: 1; }
+    #navSmart { grid-column: 2; grid-row: 1; }
+    #navTheme { grid-column: 3; grid-row: 1; }
+    #navImport { grid-column: 1; grid-row: 2; }
+    #navExport { grid-column: 2; grid-row: 2; }
+    #navSettings { grid-column: 3; grid-row: 2; }
+    .menu-tools-grid #navAddEdit,
+    .menu-tools-grid #timeAdd {
+      grid-column: 4;
+      border-radius: 8px; padding: 6px 4px; font-size: 11px; font-weight: 700;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .menu-tools-grid #navAddEdit { grid-row: 1; }
+    .menu-tools-grid #timeAdd { grid-row: 2; }
   }
   .four-hour th.now-marker { box-shadow: inset 0 -3px 0 var(--page-accent); }
   .four-hour th.now-marker::after { content: " ● now"; color: var(--page-accent); font-weight: 700; font-size: 10px; }
@@ -1002,10 +1029,9 @@
       <button id="navSmart">Smart Recommend</button>
       <button id="navTheme">Theme</button>
       <button id="navImport">Import</button>
-      <button id="navExport" style="background: var(--page-accent-soft); border-color: var(--page-accent);">💾 Backup</button>
+      <button id="navExport">💾 Backup</button>
       <button id="navSettings">Settings</button>
     </div>
-    <button id="navAddEdit" class="menu-tools-add">+ Add</button>
   </div>
 </header>
 
@@ -1021,9 +1047,9 @@
     <div>
       <div class="card">
         <!-- Mobile-only row — populated by JS (moveControlsForMobile()), which
-             relocates the real #planApplied and #timeAdd elements here rather
-             than duplicating them, so there's exactly one of each in the DOM
-             regardless of viewport. Empty/unused on desktop. -->
+             relocates the real #planApplied element here rather than
+             duplicating it, so there's exactly one in the DOM regardless of
+             viewport. Empty/unused on desktop. -->
         <div class="mobile-plan-row" id="mobilePlanRow"></div>
         <div class="plan-row">
           <div class="day-pill" id="dayPill">Sunday</div>
@@ -1033,6 +1059,11 @@
             <button id="dayFwd" title="Next day (or swipe timeline left)">+</button>
           </div>
           <div class="plan-indicator" id="planApplied">Plan: —</div>
+          <!-- Native/desktop home for these two — moveControlsForMobile()
+               relocates them into the toolbar's .menu-tools-grid on mobile
+               instead (stacked there, matching Theme/Settings sizing). -->
+          <button id="navAddEdit">+ Add</button>
+          <button id="timeAdd" class="add-now-badge" title="Add an item for right now">+ Add Now</button>
         </div>
         <div class="time-bar">
           <div class="now-pill" id="nowPill">--:--</div>
@@ -1041,7 +1072,6 @@
             <input id="timeOffset" type="range" min="-24" max="4" step="1" value="0" />
             <button id="timeFwd" title="Forward 1 hour">▶</button>
             <span class="range-label" id="rangeLabel"></span>
-            <button id="timeAdd" class="add-now-badge" title="Add an item for right now">+ Add Now</button>
             <button id="timeNow" class="now-badge" title="Snap back to current time">↺ Now</button>
           </div>
         </div>
@@ -1712,7 +1742,7 @@
 // Bump this on every deploy-worthy change — shown in the header and footer so
 // it's obvious at a glance whether a given device (phone vs desktop) has
 // actually picked up the latest deployed version after a reload.
-const APP_VERSION = "v64";
+const APP_VERSION = "v65";
 
 const STORAGE_KEY = "opto_app_v2";
 
@@ -7187,12 +7217,20 @@ window.addEventListener("resize", updateHeaderHeightVar);
 let _mobileLayoutSlots = null;
 function captureMobileLayoutSlots() {
   if (_mobileLayoutSlots) return;
+  // Just the parent, not a captured nextSibling reference — with 4 elements
+  // now shuffling between containers (up from 2), a stale sibling reference
+  // can point at a node that's temporarily not a child of the target parent
+  // at all (insertBefore throws in that case). Each of these 4 elements is
+  // naturally the LAST child of its home container on desktop (nothing
+  // fixed follows any of them there), so plain appendChild — restored in
+  // the right order — reproduces the correct layout without that hazard.
   const capture = (id) => {
     const el = document.getElementById(id);
-    return el ? { el, parent: el.parentNode, next: el.nextSibling } : null;
+    return el ? { el, parent: el.parentNode } : null;
   };
   _mobileLayoutSlots = {
     planApplied: capture("planApplied"),
+    navAddEdit: capture("navAddEdit"),
     timeAdd: capture("timeAdd"),
     timeNow: capture("timeNow"),
   };
@@ -7203,20 +7241,27 @@ function moveControlsForMobile() {
   const isMobile = window.matchMedia("(max-width: 800px)").matches;
   const mobileRow = document.getElementById("mobilePlanRow");
   const dayPill = document.getElementById("dayPill");
+  const menuGrid = document.querySelector(".menu-tools-grid");
   if (isMobile) {
     if (mobileRow && slots.planApplied && slots.planApplied.el.parentNode !== mobileRow) {
       mobileRow.appendChild(slots.planApplied.el);
     }
-    if (mobileRow && slots.timeAdd && slots.timeAdd.el.parentNode !== mobileRow) {
-      mobileRow.appendChild(slots.timeAdd.el);
+    // #navAddEdit then #timeAdd, in that DOM order, so the 4th grid column
+    // reads "+Add" on top / "+Add Now" below (grid fills left-to-right,
+    // top-to-bottom) — matches Kelvin's requested stacking, 2026-07-28.
+    if (menuGrid && slots.navAddEdit && slots.navAddEdit.el.parentNode !== menuGrid) {
+      menuGrid.appendChild(slots.navAddEdit.el);
+    }
+    if (menuGrid && slots.timeAdd && slots.timeAdd.el.parentNode !== menuGrid) {
+      menuGrid.appendChild(slots.timeAdd.el);
     }
     if (dayPill && slots.timeNow && slots.timeNow.el.previousElementSibling !== dayPill) {
       dayPill.parentNode.insertBefore(slots.timeNow.el, dayPill.nextSibling);
     }
   } else {
-    ["planApplied", "timeAdd", "timeNow"].forEach(key => {
+    ["planApplied", "navAddEdit", "timeAdd", "timeNow"].forEach(key => {
       const s = slots[key];
-      if (s && s.el.parentNode !== s.parent) s.parent.insertBefore(s.el, s.next);
+      if (s && s.el.parentNode !== s.parent) s.parent.appendChild(s.el);
     });
   }
 }
