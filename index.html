@@ -1830,7 +1830,7 @@
 // Bump this on every deploy-worthy change — shown in the header and footer so
 // it's obvious at a glance whether a given device (phone vs desktop) has
 // actually picked up the latest deployed version after a reload.
-const APP_VERSION = "v70";
+const APP_VERSION = "v71";
 
 const STORAGE_KEY = "opto_app_v2";
 
@@ -2355,6 +2355,8 @@ const DEFAULT_NOTE_TAGS = [
   { name:"Dizziness",    category:"Symptom", matchWords:["dizziness","dizzy","lightheaded"] },
   { name:"Cramp",        category:"Symptom", matchWords:["cramp","cramping","spasm"] },
   { name:"Nausea",       category:"Symptom", matchWords:["nausea","nauseous","queasy"] },
+  { name:"Palpitations", category:"Symptom", matchWords:["palpitations","heart racing","heart pounding","fluttering heart"] },
+  { name:"Heart Rate",   category:"Symptom", matchWords:["heart rate","pulse"] },
   { name:"Sleep",        category:"Sleep",   matchWords:["sleep","insomnia","couldn't sleep","woke up"] },
   { name:"Anxious",      category:"Mental",  matchWords:["anxious","anxiety","nervous"] },
   { name:"Stressed",     category:"Mental",  matchWords:["stressed","stress","overwhelmed"] },
@@ -2373,6 +2375,24 @@ function seedNoteTags() {
     existing.add(tag.name.toLowerCase());
   }
   state.intake._noteTagsSeededV1 = true;
+  saveState();
+}
+
+// One-time top-up for devices that already ran seedNoteTags() before
+// Palpitations/Heart Rate existed — seedNoteTags() itself only ever runs
+// once, so a device that already seeded wouldn't otherwise pick these up.
+// Same one-time-migration pattern as migrateVitaminNamePrefix().
+function seedNoteTagsV2() {
+  if (!state.intake) state.intake = {};
+  if (!Array.isArray(state.intake.noteTags)) state.intake.noteTags = [];
+  if (state.intake._noteTagsSeededV2) return;
+  const existing = new Set(state.intake.noteTags.map(t => (t.name || "").trim().toLowerCase()));
+  for (const name of ["Palpitations", "Heart Rate"]) {
+    if (existing.has(name.toLowerCase())) continue;
+    const tag = DEFAULT_NOTE_TAGS.find(t => t.name === name);
+    if (tag) { state.intake.noteTags.push({ ...tag }); existing.add(name.toLowerCase()); }
+  }
+  state.intake._noteTagsSeededV2 = true;
   saveState();
 }
 
@@ -5352,7 +5372,11 @@ function fastParseNote(text) {
   for (const tag of tags) {
     const words = (tag.matchWords && tag.matchWords.length) ? tag.matchWords : [tag.name];
     const hit = words.some(w => {
-      const wLower = (w || "").toLowerCase();
+      // "note"/"notes" can never appear in the body text here — it's the
+      // trigger word tryNoteVoiceCommand already stripped out before this
+      // runs — so a tag whose own name contains it (e.g. a user typing
+      // "Heart Note") would otherwise never be able to match anything.
+      const wLower = (w || "").toLowerCase().replace(/\bnotes?\b/g, "").trim().replace(/\s+/g, " ");
       if (wLower.length < 3) return false;
       if (normalized.includes(wLower)) return true;
       // Multi-word phrases also match out of order — "pain in my left back"
@@ -8257,6 +8281,7 @@ migrateTestResults();
 seedCommonCatalogItems();
 migrateVitaminNamePrefix();
 seedNoteTags();
+seedNoteTagsV2();
 document.getElementById("appVersionTag").textContent = APP_VERSION;
 document.getElementById("appVersionTagFooter").textContent = APP_VERSION;
 applyTheme();
