@@ -1198,6 +1198,12 @@
     <div style="color: var(--text-dim); font-size: 12px; margin-bottom: 10px;">Daily pain/spasm observations entered in Intake → Symptoms Log appear here.</div>
     <div id="healthSymptoms"></div>
   </div>
+  <div class="card">
+    <h3 class="card-title">Notes</h3>
+    <div style="color: var(--text-dim); font-size: 12px; margin-bottom: 10px;">Say "Note ..." from Capture, or "find note X" / "view log for X" to search. Most recent 15 shown here.</div>
+    <div id="healthNotesList"></div>
+    <button id="healthNotesViewAll" type="button" style="margin-top: 8px; font-size: 12px;">View full Note Log →</button>
+  </div>
 </section>
 
 <!-- ============== CAPTURE PAGE (mobile quick-log) ============== -->
@@ -1458,6 +1464,57 @@
     <div class="modal-actions">
       <button id="addCatCancel">Cancel</button>
       <button id="addCatSave" class="primary">Save</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-bg" id="noteModal">
+  <div class="modal" style="max-width: 480px;">
+    <h3 id="noteModalTitle">Note</h3>
+    <div id="notePastHint" style="display:none; font-size: 12px; padding: 8px 10px; background: var(--panel-2); border-radius: 6px; border-left: 3px solid var(--accent-2); margin-bottom: 8px;"></div>
+    <div class="modal-row">
+      <label>What's going on? (edit if misheard)</label>
+      <textarea id="noteText" rows="3" style="width: 100%; padding: 6px 10px; font-family: inherit; background: var(--panel); color: var(--text); border: 1px solid var(--border); border-radius: 6px;"></textarea>
+    </div>
+    <div class="modal-row">
+      <label>Tags</label>
+      <div id="noteTagsChips" style="display:flex; flex-wrap:wrap; gap:6px;"></div>
+      <div style="display:flex; gap:6px; margin-top:6px;">
+        <input id="noteNewTagInput" type="text" placeholder="Add a new tag…" style="flex:1;" />
+        <button id="noteAddTagBtn" type="button">+ Add</button>
+      </div>
+    </div>
+    <div class="modal-row" style="display: grid; grid-template-columns: 1fr 140px; gap: 8px;">
+      <div><label>Category</label>
+        <select id="noteCategory">
+          <option value="Symptom">Symptom</option>
+          <option value="Mental">Mental</option>
+          <option value="Sleep">Sleep</option>
+          <option value="Legal">Legal</option>
+          <option value="General">General</option>
+        </select>
+      </div>
+      <div><label>Severity <span style="color: var(--text-dim); font-weight: 400;">(optional)</span></label>
+        <input id="noteSeverity" type="range" min="0" max="10" step="1" style="width:100%;" />
+        <div style="text-align:center; font-size: 12px;" id="noteSeverityVal">—</div>
+      </div>
+    </div>
+    <div class="modal-actions">
+      <button id="noteCancel">Cancel</button>
+      <button id="noteSave" class="primary">Save</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-bg" id="noteLogModal">
+  <div class="modal" style="max-width: 640px;">
+    <h3>Note Log</h3>
+    <div class="modal-row">
+      <input id="noteLogQuery" type="text" placeholder="Search notes (tag, category, or text)…" style="width:100%; padding:6px 10px; background:var(--panel); color:var(--text); border:1px solid var(--border); border-radius:6px;" />
+    </div>
+    <div id="noteLogResults" style="max-height:420px; overflow-y:auto; margin-top:8px;"></div>
+    <div class="modal-actions">
+      <button id="noteLogClose">Close</button>
     </div>
   </div>
 </div>
@@ -1773,7 +1830,7 @@
 // Bump this on every deploy-worthy change — shown in the header and footer so
 // it's obvious at a glance whether a given device (phone vs desktop) has
 // actually picked up the latest deployed version after a reload.
-const APP_VERSION = "v68";
+const APP_VERSION = "v69";
 
 const STORAGE_KEY = "opto_app_v2";
 
@@ -2276,6 +2333,60 @@ function migrateVitaminNamePrefix() {
   state.intake.vitamins = Array.from(byName.values());
   state.intake._vitaminPrefixMigratedV1 = true;
   saveState();
+}
+
+// ============================================================================
+// NOTE TAGS — catalog for the Notes feature (state.intake.notes). Kept
+// separate from CATEGORY_REGISTRY: tags classify a Note, they aren't
+// themselves "logged" items with a completion status. Each tag has a broad
+// `category` (Symptom/Mental/Sleep/Legal/General) used to auto-suggest a
+// Note's category once a tag is picked/matched. Seeded once, same
+// once-only pattern as seedCommonCatalogItems().
+// ============================================================================
+// `matchWords` covers common everyday phrasing people actually say/type,
+// beyond the tag's own display name (matched separately) — e.g. someone
+// saying "tired" or "dizzy" should hit Fatigue/Dizziness without needing to
+// say the clinical-sounding tag name itself.
+const DEFAULT_NOTE_TAGS = [
+  { name:"Headache",     category:"Symptom", matchWords:["headache","migraine"] },
+  { name:"Fatigue",      category:"Symptom", matchWords:["fatigue","tired","exhausted","worn out"] },
+  { name:"Back Pain",    category:"Symptom", matchWords:["back pain","back ache","backache"] },
+  { name:"Stomach Pain", category:"Symptom", matchWords:["stomach pain","stomach ache","stomachache"] },
+  { name:"Dizziness",    category:"Symptom", matchWords:["dizziness","dizzy","lightheaded"] },
+  { name:"Cramp",        category:"Symptom", matchWords:["cramp","cramping","spasm"] },
+  { name:"Nausea",       category:"Symptom", matchWords:["nausea","nauseous","queasy"] },
+  { name:"Sleep",        category:"Sleep",   matchWords:["sleep","insomnia","couldn't sleep","woke up"] },
+  { name:"Anxious",      category:"Mental",  matchWords:["anxious","anxiety","nervous"] },
+  { name:"Stressed",     category:"Mental",  matchWords:["stressed","stress","overwhelmed"] },
+  { name:"Legal",        category:"Legal",   matchWords:["legal","lawyer","contract","dispute","sue"] },
+  { name:"General",      category:"General", matchWords:["general"] },
+];
+
+function seedNoteTags() {
+  if (!state.intake) state.intake = {};
+  if (!Array.isArray(state.intake.noteTags)) state.intake.noteTags = [];
+  if (state.intake._noteTagsSeededV1) return;
+  const existing = new Set(state.intake.noteTags.map(t => (t.name || "").trim().toLowerCase()));
+  for (const tag of DEFAULT_NOTE_TAGS) {
+    if (existing.has(tag.name.toLowerCase())) continue;
+    state.intake.noteTags.push({ ...tag });
+    existing.add(tag.name.toLowerCase());
+  }
+  state.intake._noteTagsSeededV1 = true;
+  saveState();
+}
+
+// Returns true on success, false (with an alert already shown) on failure —
+// same contract as addCustomCategory().
+function addNoteTag(name, category) {
+  const trimmed = (name || "").trim();
+  if (!trimmed) { alert("Tag name is required."); return false; }
+  if (!Array.isArray(state.intake.noteTags)) state.intake.noteTags = [];
+  const exists = state.intake.noteTags.some(t => (t.name || "").toLowerCase() === trimmed.toLowerCase());
+  if (exists) { alert('A tag named "' + trimmed + '" already exists.'); return false; }
+  state.intake.noteTags.push({ name: trimmed, category: category || "General", matchWords: [trimmed] });
+  saveState();
+  return true;
 }
 
 /* ---------- DEFAULT PLAN SCHEDULES ----------
@@ -3983,6 +4094,12 @@ const INTAKE_TABS = [
   { id:"Personal",      label:"Personal",      fields:["gender","birthdate","weight","height","workDays","workHours"], single:true },
   { id:"Health",        label:"Health",        fields:["issue","dateDiagnosed","mostRecent","details","testedFor","meds"] },
   { id:"Symptoms",      label:"Symptoms Log",  fields:["date","condition","painLevel","spasms","details","notes"] },
+  // Notes — freeform, timestamped journal entries (how you're feeling, pain,
+  // or anything else). Deliberately NOT in CATEGORY_REGISTRY: that registry
+  // models catalog-of-predefined-items-with-a-completion-checkbox (Food,
+  // Vitamin, etc.), which is the wrong shape for one-off generative text.
+  // Same flat-list pattern as Symptoms Log above.
+  { id:"Notes",         label:"Notes",         fields:["date","time","text","category","severity","tags"] },
   { id:"Doctors",       label:"Doctor List",   fields:["name","specialty","company","address","phone"] },
   { id:"Doctor Visits", label:"Doctor Visits", fields: categoryDef("Appointment").fields },
   { id:"Past Visits",   label:"Past Visits",   fields:["visit","date","time","name","address","reason"] },
@@ -3999,7 +4116,7 @@ const INTAKE_TABS = [
 ];
 
 const TAB_TO_STATE_KEY = {
-  Personal:"personal", Health:"health", Symptoms:"symptoms",
+  Personal:"personal", Health:"health", Symptoms:"symptoms", Notes:"notes",
   Doctors:"doctors", "Past Visits":"pastVisits",
 };
 for (const c of CATEGORY_REGISTRY) TAB_TO_STATE_KEY[c.intakeTabId || c.id] = c.stateKey;
@@ -4011,6 +4128,9 @@ const FIELD_LABELS = {
   dateDiagnosed: "Date diagnosed",
   mostRecent: "Most recent",
   painLevel: "Pain (1-10)",
+  severity: "Severity (1-10)",
+  tags: "Tags",
+  text: "Note",
   foods: "Foods (from Food intake)",
   calories: "Calories",
   protein: "Protein (g)",
@@ -4025,7 +4145,7 @@ const FIELD_LABELS = {
 
 // Friendly singular label per tab, used as the Add-Item modal title.
 const INTAKE_ADD_LABELS = {
-  Health: "Health Issue", Symptoms: "Symptom Entry", Doctors: "Doctor",
+  Health: "Health Issue", Symptoms: "Symptom Entry", Notes: "Note Entry", Doctors: "Doctor",
   "Past Visits": "Past Visit",
 };
 for (const c of CATEGORY_REGISTRY) INTAKE_ADD_LABELS[c.intakeTabId || c.id] = c.addLabel || c.id;
@@ -4153,6 +4273,53 @@ function promptRenameCustomCategory(id) {
   }
 }
 
+// Removes a custom category entirely — refuses if it still has logged
+// entries, so this can't silently destroy data (rename is safe to do freely
+// since it only touches the label; delete is not, so it gets a real guard).
+// Returns true on success, false (with an alert already shown) on failure.
+function deleteCustomCategory(id) {
+  const custom = (state.intake.customCategories || []).find(c => c.id === id);
+  if (!custom) return false;
+  const entries = state.intake[custom.stateKey];
+  if (Array.isArray(entries) && entries.length > 0) {
+    alert('"' + custom.label + '" still has ' + entries.length + ' entr' + (entries.length === 1 ? "y" : "ies") + ' — remove them first before deleting the category.');
+    return false;
+  }
+  state.intake.customCategories = state.intake.customCategories.filter(c => c.id !== id);
+  delete state.intake[custom.stateKey];
+  const regIdx = CATEGORY_REGISTRY.findIndex(c => c.id === id);
+  if (regIdx !== -1) CATEGORY_REGISTRY.splice(regIdx, 1);
+  const tabIdx = INTAKE_TABS.findIndex(t => t.id === id);
+  if (tabIdx !== -1) INTAKE_TABS.splice(tabIdx, 1);
+  delete TAB_TO_STATE_KEY[id];
+  delete INTAKE_ADD_LABELS[id];
+  delete VOICE_CAT_TO_STATE_KEY[id];
+  delete AN_INTAKE_KEY_MAP[id];
+  delete AN_AMOUNT_FIELD_MAP[id];
+  for (const w of Object.keys(VOICE_CAT_MAP)) if (VOICE_CAT_MAP[w] === id) delete VOICE_CAT_MAP[w];
+  const catIdx = CATEGORIES.indexOf(id);
+  if (catIdx !== -1) CATEGORIES.splice(catIdx, 1);
+  if (state.ui.intakeTab === id) state.ui.intakeTab = "Personal";
+  saveState();
+  return true;
+}
+
+function promptDeleteCustomCategory(id) {
+  const custom = (state.intake.customCategories || []).find(c => c.id === id);
+  if (!custom) return;
+  const entries = state.intake[custom.stateKey];
+  const count = Array.isArray(entries) ? entries.length : 0;
+  const msg = count > 0
+    ? 'Delete "' + custom.label + '"? It still has ' + count + ' entr' + (count === 1 ? "y" : "ies") + ' — you\'ll need to remove them first.'
+    : 'Delete "' + custom.label + '"? It has no entries, so this is safe.';
+  if (!confirm(msg)) return;
+  if (deleteCustomCategory(id)) {
+    if (typeof renderCustomCategoryButtons === "function") renderCustomCategoryButtons();
+    renderIntake();
+    showToast('"' + custom.label + '" deleted');
+  }
+}
+
 // For "+ New Category" opened from inside the Add Now / Browse &
 // Add category picker (step 1) — remembers the mode/time/plan/capture
 // context so creating a category resumes straight into it instead of losing
@@ -4221,6 +4388,7 @@ function findOrRemoveBlankCatalogRows(dryRun) {
 
 function renderIntake() {
   if (!state.intake.symptoms) state.intake.symptoms = [];
+  if (!state.intake.notes) state.intake.notes = [];
   if (!state.intake.meals) state.intake.meals = [];
   // Seed meals on first run for users who upgraded after meals were added
   if (state.intake.meals.length === 0 && SEED && SEED.meals) {
@@ -4268,8 +4436,17 @@ function renderIntake() {
         e.stopPropagation();
         promptRenameCustomCategory(t.id);
       };
+      const deleteBtn = document.createElement("button");
+      deleteBtn.textContent = "🗑";
+      deleteBtn.title = "Delete category";
+      deleteBtn.style.cssText = "flex:0 0 auto; padding:8px 10px;";
+      deleteBtn.onclick = (e) => {
+        e.stopPropagation();
+        promptDeleteCustomCategory(t.id);
+      };
       row.appendChild(b);
       row.appendChild(editBtn);
+      row.appendChild(deleteBtn);
       nav.appendChild(row);
     } else {
       nav.appendChild(b);
@@ -5098,6 +5275,10 @@ function tryTestVoiceCommand(text, opts) {
   if (!text) return false;
   opts = opts || {};
   if (tryVoiceCategoryCreate(text, opts)) return true;
+  // Checked at the same precedence tier as category-create, before normal
+  // category/item matching — a Note is freeform text, not something that
+  // should ever get run through catalog matching.
+  if (typeof tryNoteVoiceCommand === "function" && tryNoteVoiceCommand(text, opts)) return true;
   const cleaned = text.trim().replace(/[.,!?]+$/g, "");
 
   // Optional verb prefix (add / log / show / open) then category [+ item]
@@ -5142,6 +5323,57 @@ function normalizeVoiceText(text) {
   // Merge digit + whitespace + letter (for units like "8 oz"): "8 oz" → "8oz"
   result = result.replace(/(\d)\s+([a-z])/g, "$1$2");
   return result;
+}
+
+// ============================================================================
+// FAST NOTE PARSER — local keyword/number matching, no external API. Scans
+// raw note text against the tag catalog (state.intake.noteTags) to suggest
+// tags + category, and pulls a severity number (1-10) if present. Purely a
+// suggestion — the raw text is always saved regardless of what this returns,
+// so a miss here never loses data.
+//
+// Deliberately does NOT reuse normalizeVoiceText(): its letter+digit merging
+// ("pain 6" → "pain6") is meant for matching catalog item names like
+// "Coffee2", but it would glue a severity number onto the preceding word and
+// break the \b word-boundary match below. Only the number-word→digit part is
+// wanted here, so that piece is duplicated rather than shared.
+// ============================================================================
+const NOTE_NUMBER_WORDS = {
+  "zero": "0", "one": "1", "two": "2", "three": "3", "four": "4",
+  "five": "5", "six": "6", "seven": "7", "eight": "8", "nine": "9", "ten": "10"
+};
+function fastParseNote(text) {
+  let normalized = (text || "").toLowerCase().trim();
+  for (const word of Object.keys(NOTE_NUMBER_WORDS)) {
+    normalized = normalized.replace(new RegExp("\\b" + word + "\\b", "gi"), NOTE_NUMBER_WORDS[word]);
+  }
+  const tags = state.intake.noteTags || [];
+  const matched = [];
+  for (const tag of tags) {
+    const words = (tag.matchWords && tag.matchWords.length) ? tag.matchWords : [tag.name];
+    const hit = words.some(w => {
+      const wLower = (w || "").toLowerCase();
+      return wLower.length >= 3 && normalized.includes(wLower);
+    });
+    if (hit) matched.push(tag);
+  }
+  let category = "General";
+  if (matched.length > 0) {
+    const counts = {};
+    for (const t of matched) counts[t.category] = (counts[t.category] || 0) + 1;
+    category = Object.keys(counts).sort((a, b) => counts[b] - counts[a])[0];
+  }
+  // Prefer an explicit "X/10" or "X out of 10" form; fall back to a bare
+  // 1-10 number so a plain "...a six" still registers as severity.
+  let severity = null;
+  const explicit = normalized.match(/\b([1-9]|10)\s*(?:\/|out of)\s*10\b/);
+  if (explicit) {
+    severity = parseInt(explicit[1], 10);
+  } else {
+    const bare = normalized.match(/\b([1-9]|10)\b/);
+    if (bare) severity = parseInt(bare[1], 10);
+  }
+  return { tags: matched.map(t => t.name), category, severity };
 }
 
 // Shared catalog list for both voice-matching functions below — derived from
@@ -5278,6 +5510,211 @@ function showAmbiguousMatchPicker(text, matches) {
       };
     });
   }
+}
+
+// ============================================================================
+// NOTE ENTRY — freeform journal entries (state.intake.notes). See
+// tryNoteVoiceCommand() below for how voice routes here.
+// ============================================================================
+let activeNote = null;
+let noteSelectedTags = [];
+
+function renderNoteTagChips() {
+  const box = document.getElementById("noteTagsChips");
+  if (!box) return;
+  const tags = state.intake.noteTags || [];
+  box.innerHTML = tags.map(t => {
+    const isOn = noteSelectedTags.includes(t.name);
+    return `<button type="button" class="note-tag-chip" data-tag="${escapeHtml(t.name)}" ` +
+      `style="padding:4px 10px; border-radius:14px; font-size:12px; cursor:pointer; ` +
+      `border:1px solid ${isOn ? "var(--accent)" : "var(--border)"}; ` +
+      `background:${isOn ? "var(--accent)" : "var(--panel-2)"}; color:${isOn ? "#0f1419" : "var(--text)"};">` +
+      `${escapeHtml(t.name)}</button>`;
+  }).join("");
+  box.querySelectorAll(".note-tag-chip").forEach(btn => {
+    btn.onclick = () => {
+      const tag = btn.dataset.tag;
+      noteSelectedTags = noteSelectedTags.includes(tag)
+        ? noteSelectedTags.filter(x => x !== tag)
+        : [...noteSelectedTags, tag];
+      renderNoteTagChips();
+    };
+  });
+}
+
+// Finds past notes related to `text` — by tag overlap first, falling back to
+// a plain substring search on past note text so a non-health phrase (e.g.
+// "Handyman") still finds its own history even though it matches no tag.
+function findRelatedNotes(text) {
+  const notes = state.intake.notes || [];
+  const parsed = fastParseNote(text);
+  if (parsed.tags.length > 0) {
+    return notes.filter(n => (n.tags || []).some(t => parsed.tags.includes(t)));
+  }
+  const needle = (text || "").trim().toLowerCase();
+  if (needle.length < 3) return [];
+  return notes.filter(n => (n.text || "").toLowerCase().includes(needle));
+}
+
+// Opens the Note entry modal. opts.text/tags/category/severity are pre-fill
+// suggestions (typically from fastParseNote) — always editable, never final.
+function openNoteModal(opts) {
+  opts = opts || {};
+  activeNote = {};
+  const text = opts.text || "";
+  document.getElementById("noteText").value = text;
+  noteSelectedTags = (opts.tags || []).slice();
+  renderNoteTagChips();
+  document.getElementById("noteCategory").value = opts.category || "General";
+  const sev = document.getElementById("noteSeverity");
+  const sevVal = document.getElementById("noteSeverityVal");
+  sev.value = opts.severity || 0;
+  sevVal.textContent = opts.severity ? opts.severity : "—";
+  sev.oninput = () => { sevVal.textContent = sev.value == 0 ? "—" : sev.value; };
+
+  // Surface related past notes so the user has context, without forcing a
+  // fork — creating a new note always stays the primary action.
+  const hint = document.getElementById("notePastHint");
+  if (hint) {
+    const past = text ? findRelatedNotes(text) : [];
+    if (past.length > 0) {
+      hint.style.display = "";
+      hint.innerHTML = `Found ${past.length} past note${past.length === 1 ? "" : "s"} related to this. ` +
+        `<a href="#" id="notePastHintLink" style="color:var(--accent-2);">View them</a>`;
+      const link = document.getElementById("notePastHintLink");
+      if (link) link.onclick = (e) => {
+        e.preventDefault();
+        document.getElementById("noteModal").classList.remove("open");
+        if (typeof openNoteLog === "function") openNoteLog(text);
+      };
+    } else {
+      hint.style.display = "none";
+      hint.innerHTML = "";
+    }
+  }
+
+  document.getElementById("noteModal").classList.add("open");
+  setTimeout(() => document.getElementById("noteText").focus(), 60);
+}
+
+function saveNoteEntry() {
+  const text = document.getElementById("noteText").value.trim();
+  if (!text) { alert("Enter what's going on (or Cancel)."); return; }
+  const category = document.getElementById("noteCategory").value;
+  const sevRaw = parseInt(document.getElementById("noteSeverity").value, 10);
+  const severity = sevRaw > 0 ? sevRaw : null;
+  if (!Array.isArray(state.intake.notes)) state.intake.notes = [];
+  state.intake.notes.push({
+    date: todayDate(), time: nowHHMM(), text, category, severity,
+    tags: noteSelectedTags.slice()
+  });
+  saveState();
+  document.getElementById("noteModal").classList.remove("open");
+  activeNote = null;
+  if (typeof showToast === "function") showToast("✓ Note saved");
+  const mainPage = document.getElementById("page-main");
+  if (typeof renderMain === "function" && mainPage && mainPage.classList.contains("active")) renderMain();
+}
+
+// Dedicated voice command for Notes — checked BEFORE normal category/item
+// matching (same precedence as tryVoiceCategoryCreate), since a Note's whole
+// point is freeform text that shouldn't be forced through catalog matching.
+//   "note" / "note <text>" / "log note <text>" / "add note <text>"
+//     → opens the entry modal, pre-filled + tag-suggested via fastParseNote.
+//   "find note <text>" / "search note <text>" / "view log for <text>"
+//     → opens the filtered View Log (see openNoteLog(), built separately).
+// Returns true if handled.
+function tryNoteVoiceCommand(text, opts) {
+  if (!text) return false;
+  opts = opts || {};
+  const cleaned = text.trim().replace(/[.,!?]+$/g, "");
+
+  const searchMatch = cleaned.match(/^(?:find|search)\s+notes?\s*:?\s*(.*)$/i) ||
+                       cleaned.match(/^view\s+log\s+for\s+(.+)$/i);
+  if (searchMatch) {
+    const query = (searchMatch[1] || "").trim();
+    if (typeof openNoteLog === "function") {
+      openNoteLog(query);
+      if (opts.fromVoice) speak(query ? "Showing notes about " + query : "Showing all notes");
+    }
+    return true;
+  }
+
+  const logMatch = cleaned.match(/^(?:log|add)?\s*notes?\s*:?\s*(.*)$/i);
+  if (logMatch) {
+    const body = (logMatch[1] || "").trim();
+    const parsed = fastParseNote(body);
+    openNoteModal({ text: body, tags: parsed.tags, category: parsed.category, severity: parsed.severity });
+    if (opts.fromVoice) speak(body ? "Note ready to save" : "Listening for your note");
+    return true;
+  }
+
+  return false;
+}
+
+// Looks at Food logs + Test readings on the same date, in the 2 hours
+// leading up to a note's timestamp — a plain lookup over existing state,
+// no AI. Mirrors the "what happened before this" idea from the Health page's
+// existing per-test history, just windowed and applied to a Note instead.
+function getNoteContext(note) {
+  const windowMin = 120;
+  const noteMin = timeToMinutes(note.time || "00:00");
+  const meals = (state.logs || []).filter(l => l.date === note.date && l.cat === "Food" &&
+    typeof l.time === "string" && timeToMinutes(l.time) <= noteMin && timeToMinutes(l.time) >= noteMin - windowMin);
+  const tests = [];
+  const dayTests = (state.testResults || {})[note.date] || {};
+  for (const testName in dayTests) {
+    for (const time in dayTests[testName]) {
+      const tMin = timeToMinutes(time);
+      if (tMin <= noteMin && tMin >= noteMin - windowMin) {
+        const entry = dayTests[testName][time];
+        const best = pickBestReading(testName, entry.readings || []);
+        tests.push({ name: testName, time, value: best ? best.value : "", units: entry.units || "" });
+      }
+    }
+  }
+  return { meals, tests };
+}
+
+// Renders a filtered/searched note list into any container (Health page's
+// always-visible recent list, or the full Note Log modal) — same rendering,
+// different scope, so the two views can't silently drift apart.
+function renderNoteLogResults(query, containerId, limit) {
+  const list = document.getElementById(containerId || "noteLogResults");
+  if (!list) return;
+  const notes = (state.intake.notes || []).slice().sort((a, b) => (b.date + b.time).localeCompare(a.date + a.time));
+  const q = (query || "").trim().toLowerCase();
+  let filtered = q ? notes.filter(n =>
+    (n.text || "").toLowerCase().includes(q) ||
+    (n.tags || []).some(t => t.toLowerCase().includes(q)) ||
+    (n.category || "").toLowerCase().includes(q)
+  ) : notes;
+  if (limit) filtered = filtered.slice(0, limit);
+  if (filtered.length === 0) {
+    list.innerHTML = '<div style="color:var(--text-dim); font-size:12px;">No notes found' + (q ? ' for "' + escapeHtml(query) + '"' : (containerId === "healthNotesList" ? ". Say \"Note ...\" from Capture to add one." : ".")) + '</div>';
+    return;
+  }
+  list.innerHTML = filtered.map(n => {
+    const ctx = getNoteContext(n);
+    const ctxParts = [];
+    if (ctx.meals.length) ctxParts.push("🍽️ " + ctx.meals.map(m => escapeHtml(m.name) + " (" + m.time + ")").join(", "));
+    if (ctx.tests.length) ctxParts.push("🩺 " + ctx.tests.map(t => escapeHtml(t.name) + ": " + escapeHtml(t.value) + (t.units ? " " + escapeHtml(t.units) : "") + " (" + t.time + ")").join(", "));
+    return `<div style="padding:8px 10px; border-bottom:1px solid var(--border);">` +
+      `<div style="font-size:11px; color:var(--text-dim);">${escapeHtml(n.date)} ${escapeHtml(n.time)} · ${escapeHtml(n.category || "General")}${n.severity ? " · Severity " + n.severity + "/10" : ""}</div>` +
+      `<div style="font-size:13px; margin:2px 0;">${escapeHtml(n.text)}</div>` +
+      (n.tags && n.tags.length ? `<div style="font-size:11px; color:var(--accent);">${n.tags.map(escapeHtml).join(", ")}</div>` : "") +
+      (ctxParts.length ? `<div style="font-size:11px; color:var(--text-dim); margin-top:4px;">Prior 2h: ${ctxParts.join(" · ")}</div>` : "") +
+      `</div>`;
+  }).join("");
+}
+
+function openNoteLog(query) {
+  const modal = document.getElementById("noteLogModal");
+  if (!modal) return;
+  document.getElementById("noteLogQuery").value = query || "";
+  renderNoteLogResults(query || "", "noteLogResults");
+  modal.classList.add("open");
+  setTimeout(() => document.getElementById("noteLogQuery").focus(), 60);
 }
 
 function saveCaptureTranscript() {
@@ -5988,6 +6425,9 @@ function renderHealth() {
     sh += `</tbody></table>`;
     sympBox.innerHTML = sh;
   }
+
+  // NOTES — most recent 15, same renderer the full Note Log modal uses.
+  if (typeof renderNoteLogResults === "function") renderNoteLogResults("", "healthNotesList", 15);
 }
 
 let activeTest = null;
@@ -7537,7 +7977,7 @@ function wire() {
     document.querySelectorAll(".an-qty-quick").forEach(o => o.classList.toggle("active", o.dataset.qty === v));
   });
 
-  ["addItemModal","editItemModal","settingsModal","analysisModal","testResultModal","quickFoodModal","vitaminDetailModal","addNowFlowModal","intakeAddModal","addCategoryModal"].forEach(id => {
+  ["addItemModal","editItemModal","settingsModal","analysisModal","testResultModal","quickFoodModal","vitaminDetailModal","addNowFlowModal","intakeAddModal","addCategoryModal","noteModal","noteLogModal"].forEach(id => {
     document.getElementById(id).addEventListener("click", (e) => {
       if (e.target.id !== id) return;
       // intakeAddModal needs the same "reopen whoever opened me" handling as
@@ -7561,6 +8001,25 @@ function wire() {
     }
   };
   document.getElementById("addCatSave").onclick = saveAddCategoryModal;
+  document.getElementById("noteCancel").onclick = () => {
+    document.getElementById("noteModal").classList.remove("open");
+    activeNote = null;
+  };
+  document.getElementById("noteSave").onclick = saveNoteEntry;
+  document.getElementById("noteAddTagBtn").onclick = () => {
+    const input = document.getElementById("noteNewTagInput");
+    const name = input.value.trim();
+    if (!name) return;
+    if (addNoteTag(name, document.getElementById("noteCategory").value)) {
+      noteSelectedTags.push(name);
+      renderNoteTagChips();
+      input.value = "";
+    }
+  };
+  document.getElementById("noteLogClose").onclick = () => document.getElementById("noteLogModal").classList.remove("open");
+  document.getElementById("noteLogQuery").addEventListener("input", (e) => renderNoteLogResults(e.target.value, "noteLogResults"));
+  const viewAllBtn = document.getElementById("healthNotesViewAll");
+  if (viewAllBtn) viewAllBtn.onclick = () => openNoteLog("");
   document.getElementById("intakeAddSave").onclick = saveIntakeAddItem;
   // Quick-add food modal buttons
   const addNFB = document.getElementById("addNewFoodBtn");
@@ -7788,6 +8247,7 @@ migrateTestResults();
 })();
 seedCommonCatalogItems();
 migrateVitaminNamePrefix();
+seedNoteTags();
 document.getElementById("appVersionTag").textContent = APP_VERSION;
 document.getElementById("appVersionTagFooter").textContent = APP_VERSION;
 applyTheme();
