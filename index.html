@@ -1476,25 +1476,15 @@
       <label>What's going on? (edit if misheard)</label>
       <textarea id="noteText" rows="3" style="width: 100%; padding: 6px 10px; font-family: inherit; background: var(--panel); color: var(--text); border: 1px solid var(--border); border-radius: 6px;"></textarea>
     </div>
-    <div class="modal-row">
-      <label>Tags</label>
-      <div id="noteTagsChips" style="display:flex; flex-wrap:wrap; gap:6px;"></div>
-      <div style="display:flex; gap:6px; margin-top:6px;">
-        <input id="noteNewTagInput" type="text" placeholder="Add a new tag…" style="flex:1;" />
-        <button id="noteAddTagBtn" type="button">+ Add</button>
-      </div>
-    </div>
     <div class="modal-row" style="display: grid; grid-template-columns: 1fr 140px; gap: 8px;">
       <div><label>Category</label>
         <select id="noteCategory">
-          <option value="Symptom">Symptom</option>
-          <option value="Mental">Mental</option>
-          <option value="Sleep">Sleep</option>
+          <option value="Health">Health</option>
           <option value="Legal">Legal</option>
           <option value="General">General</option>
         </select>
       </div>
-      <div><label>Severity <span style="color: var(--text-dim); font-weight: 400;">(optional)</span></label>
+      <div id="noteSeverityRow"><label>Severity <span style="color: var(--text-dim); font-weight: 400;">(optional)</span></label>
         <input id="noteSeverity" type="range" min="0" max="10" step="1" style="width:100%;" />
         <div style="text-align:center; font-size: 12px;" id="noteSeverityVal">—</div>
       </div>
@@ -1510,7 +1500,7 @@
   <div class="modal" style="max-width: 640px;">
     <h3>Note Log</h3>
     <div class="modal-row">
-      <input id="noteLogQuery" type="text" placeholder="Search notes (tag, category, or text)…" style="width:100%; padding:6px 10px; background:var(--panel); color:var(--text); border:1px solid var(--border); border-radius:6px;" />
+      <input id="noteLogQuery" type="text" placeholder="Search notes (category or text)…" style="width:100%; padding:6px 10px; background:var(--panel); color:var(--text); border:1px solid var(--border); border-radius:6px;" />
     </div>
     <div id="noteLogResults" style="max-height:420px; overflow-y:auto; margin-top:8px;"></div>
     <div class="modal-actions">
@@ -1830,7 +1820,7 @@
 // Bump this on every deploy-worthy change — shown in the header and footer so
 // it's obvious at a glance whether a given device (phone vs desktop) has
 // actually picked up the latest deployed version after a reload.
-const APP_VERSION = "v71";
+const APP_VERSION = "v74";
 
 const STORAGE_KEY = "opto_app_v2";
 
@@ -2347,67 +2337,24 @@ function migrateVitaminNamePrefix() {
 // beyond the tag's own display name (matched separately) — e.g. someone
 // saying "tired" or "dizzy" should hit Fatigue/Dizziness without needing to
 // say the clinical-sounding tag name itself.
-const DEFAULT_NOTE_TAGS = [
-  { name:"Headache",     category:"Symptom", matchWords:["headache","migraine"] },
-  { name:"Fatigue",      category:"Symptom", matchWords:["fatigue","tired","exhausted","worn out"] },
-  { name:"Back Pain",    category:"Symptom", matchWords:["back pain","back ache","backache"] },
-  { name:"Stomach Pain", category:"Symptom", matchWords:["stomach pain","stomach ache","stomachache"] },
-  { name:"Dizziness",    category:"Symptom", matchWords:["dizziness","dizzy","lightheaded"] },
-  { name:"Cramp",        category:"Symptom", matchWords:["cramp","cramping","spasm"] },
-  { name:"Nausea",       category:"Symptom", matchWords:["nausea","nauseous","queasy"] },
-  { name:"Palpitations", category:"Symptom", matchWords:["palpitations","heart racing","heart pounding","fluttering heart"] },
-  { name:"Heart Rate",   category:"Symptom", matchWords:["heart rate","pulse"] },
-  { name:"Sleep",        category:"Sleep",   matchWords:["sleep","insomnia","couldn't sleep","woke up"] },
-  { name:"Anxious",      category:"Mental",  matchWords:["anxious","anxiety","nervous"] },
-  { name:"Stressed",     category:"Mental",  matchWords:["stressed","stress","overwhelmed"] },
-  { name:"Legal",        category:"Legal",   matchWords:["legal","lawyer","contract","dispute","sue"] },
-  { name:"General",      category:"General", matchWords:["general"] },
+// Notes use just 3 categories (Health/Legal/General) — no per-symptom tag
+// catalog. Health folds in everything physical/mental/sleep-related, since
+// that's all analyzed together against Food/Medication/Test data anyway; the
+// specific complaint (headache vs. cramp vs. insomnia) lives in the note's
+// own text and is findable later via plain text search (see openNoteLog()),
+// not a pre-created tag. Legal stays separate so it never bleeds into health
+// analysis. Anything else (to-dos, reminders, misc thoughts) is General.
+const NOTE_HEALTH_KEYWORDS = [
+  "headache","migraine","fatigue","tired","exhausted","worn out",
+  "back pain","back ache","backache","stomach pain","stomach ache","stomachache",
+  "dizziness","dizzy","lightheaded","cramp","cramping","spasm",
+  "nausea","nauseous","queasy","sleep","insomnia","woke up",
+  "anxious","anxiety","nervous","stressed","stress","overwhelmed",
+  "palpitations","heart racing","heart pounding","fluttering heart","heart rate","pulse",
+  "eye","vision","blind spot","dead spot","blurry",
+  "pain","ache","hurt","hurts","sick","dizzi"
 ];
-
-function seedNoteTags() {
-  if (!state.intake) state.intake = {};
-  if (!Array.isArray(state.intake.noteTags)) state.intake.noteTags = [];
-  if (state.intake._noteTagsSeededV1) return;
-  const existing = new Set(state.intake.noteTags.map(t => (t.name || "").trim().toLowerCase()));
-  for (const tag of DEFAULT_NOTE_TAGS) {
-    if (existing.has(tag.name.toLowerCase())) continue;
-    state.intake.noteTags.push({ ...tag });
-    existing.add(tag.name.toLowerCase());
-  }
-  state.intake._noteTagsSeededV1 = true;
-  saveState();
-}
-
-// One-time top-up for devices that already ran seedNoteTags() before
-// Palpitations/Heart Rate existed — seedNoteTags() itself only ever runs
-// once, so a device that already seeded wouldn't otherwise pick these up.
-// Same one-time-migration pattern as migrateVitaminNamePrefix().
-function seedNoteTagsV2() {
-  if (!state.intake) state.intake = {};
-  if (!Array.isArray(state.intake.noteTags)) state.intake.noteTags = [];
-  if (state.intake._noteTagsSeededV2) return;
-  const existing = new Set(state.intake.noteTags.map(t => (t.name || "").trim().toLowerCase()));
-  for (const name of ["Palpitations", "Heart Rate"]) {
-    if (existing.has(name.toLowerCase())) continue;
-    const tag = DEFAULT_NOTE_TAGS.find(t => t.name === name);
-    if (tag) { state.intake.noteTags.push({ ...tag }); existing.add(name.toLowerCase()); }
-  }
-  state.intake._noteTagsSeededV2 = true;
-  saveState();
-}
-
-// Returns true on success, false (with an alert already shown) on failure —
-// same contract as addCustomCategory().
-function addNoteTag(name, category) {
-  const trimmed = (name || "").trim();
-  if (!trimmed) { alert("Tag name is required."); return false; }
-  if (!Array.isArray(state.intake.noteTags)) state.intake.noteTags = [];
-  const exists = state.intake.noteTags.some(t => (t.name || "").toLowerCase() === trimmed.toLowerCase());
-  if (exists) { alert('A tag named "' + trimmed + '" already exists.'); return false; }
-  state.intake.noteTags.push({ name: trimmed, category: category || "General", matchWords: [trimmed] });
-  saveState();
-  return true;
-}
+const NOTE_LEGAL_KEYWORDS = ["legal","lawyer","attorney","contract","dispute","sue","lawsuit","court"];
 
 /* ---------- DEFAULT PLAN SCHEDULES ----------
    Multi is placed at LUNCH (12:30) so it's a few hours from morning meds — per label instructions.
@@ -4119,7 +4066,7 @@ const INTAKE_TABS = [
   // models catalog-of-predefined-items-with-a-completion-checkbox (Food,
   // Vitamin, etc.), which is the wrong shape for one-off generative text.
   // Same flat-list pattern as Symptoms Log above.
-  { id:"Notes",         label:"Notes",         fields:["date","time","text","category","severity","tags"] },
+  { id:"Notes",         label:"Notes",         fields:["date","time","text","category","severity"] },
   { id:"Doctors",       label:"Doctor List",   fields:["name","specialty","company","address","phone"] },
   { id:"Doctor Visits", label:"Doctor Visits", fields: categoryDef("Appointment").fields },
   { id:"Past Visits",   label:"Past Visits",   fields:["visit","date","time","name","address","reason"] },
@@ -4149,7 +4096,6 @@ const FIELD_LABELS = {
   mostRecent: "Most recent",
   painLevel: "Pain (1-10)",
   severity: "Severity (1-10)",
-  tags: "Tags",
   text: "Note",
   foods: "Foods (from Food intake)",
   calories: "Calories",
@@ -5346,11 +5292,11 @@ function normalizeVoiceText(text) {
 }
 
 // ============================================================================
-// FAST NOTE PARSER — local keyword/number matching, no external API. Scans
-// raw note text against the tag catalog (state.intake.noteTags) to suggest
-// tags + category, and pulls a severity number (1-10) if present. Purely a
-// suggestion — the raw text is always saved regardless of what this returns,
-// so a miss here never loses data.
+// FAST NOTE PARSER — local keyword/number matching, no external API. Suggests
+// just a category (Health/Legal/General — see NOTE_HEALTH_KEYWORDS/
+// NOTE_LEGAL_KEYWORDS above) and a severity number (1-10) if present. Purely
+// a suggestion, always editable — the raw text is saved regardless of what
+// this returns, so a miss here never loses data.
 //
 // Deliberately does NOT reuse normalizeVoiceText(): its letter+digit merging
 // ("pain 6" → "pain6") is meant for matching catalog item names like
@@ -5367,35 +5313,11 @@ function fastParseNote(text) {
   for (const word of Object.keys(NOTE_NUMBER_WORDS)) {
     normalized = normalized.replace(new RegExp("\\b" + word + "\\b", "gi"), NOTE_NUMBER_WORDS[word]);
   }
-  const tags = state.intake.noteTags || [];
-  const matched = [];
-  for (const tag of tags) {
-    const words = (tag.matchWords && tag.matchWords.length) ? tag.matchWords : [tag.name];
-    const hit = words.some(w => {
-      // "note"/"notes" can never appear in the body text here — it's the
-      // trigger word tryNoteVoiceCommand already stripped out before this
-      // runs — so a tag whose own name contains it (e.g. a user typing
-      // "Heart Note") would otherwise never be able to match anything.
-      const wLower = (w || "").toLowerCase().replace(/\bnotes?\b/g, "").trim().replace(/\s+/g, " ");
-      if (wLower.length < 3) return false;
-      if (normalized.includes(wLower)) return true;
-      // Multi-word phrases also match out of order — "pain in my left back"
-      // should still hit "back pain", since people don't always say the
-      // symptom in the exact word order it's stored under.
-      if (wLower.indexOf(" ") !== -1) {
-        const parts = wLower.split(/\s+/);
-        return parts.every(p => new RegExp("\\b" + p + "\\b").test(normalized));
-      }
-      return false;
-    });
-    if (hit) matched.push(tag);
-  }
+  // Legal checked first — narrower vocabulary, so check it before the much
+  // broader Health list to avoid an unlikely accidental Health match masking it.
   let category = "General";
-  if (matched.length > 0) {
-    const counts = {};
-    for (const t of matched) counts[t.category] = (counts[t.category] || 0) + 1;
-    category = Object.keys(counts).sort((a, b) => counts[b] - counts[a])[0];
-  }
+  if (NOTE_LEGAL_KEYWORDS.some(k => normalized.includes(k))) category = "Legal";
+  else if (NOTE_HEALTH_KEYWORDS.some(k => normalized.includes(k))) category = "Health";
   // Prefer an explicit "X/10" or "X out of 10" form; fall back to a bare
   // 1-10 number so a plain "...a six" still registers as severity.
   let severity = null;
@@ -5406,7 +5328,7 @@ function fastParseNote(text) {
     const bare = normalized.match(/\b([1-9]|10)\b/);
     if (bare) severity = parseInt(bare[1], 10);
   }
-  return { tags: matched.map(t => t.name), category, severity };
+  return { category, severity };
 }
 
 // Shared catalog list for both voice-matching functions below — derived from
@@ -5550,55 +5472,34 @@ function showAmbiguousMatchPicker(text, matches) {
 // tryNoteVoiceCommand() below for how voice routes here.
 // ============================================================================
 let activeNote = null;
-let noteSelectedTags = [];
 
-function renderNoteTagChips() {
-  const box = document.getElementById("noteTagsChips");
-  if (!box) return;
-  const tags = state.intake.noteTags || [];
-  box.innerHTML = tags.map(t => {
-    const isOn = noteSelectedTags.includes(t.name);
-    return `<button type="button" class="note-tag-chip" data-tag="${escapeHtml(t.name)}" ` +
-      `style="padding:4px 10px; border-radius:14px; font-size:12px; cursor:pointer; ` +
-      `border:1px solid ${isOn ? "var(--accent)" : "var(--border)"}; ` +
-      `background:${isOn ? "var(--accent)" : "var(--panel-2)"}; color:${isOn ? "#0f1419" : "var(--text)"};">` +
-      `${escapeHtml(t.name)}</button>`;
-  }).join("");
-  box.querySelectorAll(".note-tag-chip").forEach(btn => {
-    btn.onclick = () => {
-      const tag = btn.dataset.tag;
-      noteSelectedTags = noteSelectedTags.includes(tag)
-        ? noteSelectedTags.filter(x => x !== tag)
-        : [...noteSelectedTags, tag];
-      renderNoteTagChips();
-    };
-  });
+// Shows/hides the severity slider based on category — a to-do (General) or
+// legal thought doesn't need a pain score, only Health does.
+function updateNoteSeverityVisibility() {
+  const row = document.getElementById("noteSeverityRow");
+  if (!row) return;
+  row.style.display = document.getElementById("noteCategory").value === "Health" ? "" : "none";
 }
 
-// Finds past notes related to `text` — by tag overlap first, falling back to
-// a plain substring search on past note text so a non-health phrase (e.g.
-// "Handyman") still finds its own history even though it matches no tag.
+// Finds past notes related to `text` via a plain substring search on past
+// note text — no tags to match against anymore; the specific subject just
+// lives in each note's own text, same as this search itself works.
 function findRelatedNotes(text) {
   const notes = state.intake.notes || [];
-  const parsed = fastParseNote(text);
-  if (parsed.tags.length > 0) {
-    return notes.filter(n => (n.tags || []).some(t => parsed.tags.includes(t)));
-  }
   const needle = (text || "").trim().toLowerCase();
   if (needle.length < 3) return [];
   return notes.filter(n => (n.text || "").toLowerCase().includes(needle));
 }
 
-// Opens the Note entry modal. opts.text/tags/category/severity are pre-fill
+// Opens the Note entry modal. opts.text/category/severity are pre-fill
 // suggestions (typically from fastParseNote) — always editable, never final.
 function openNoteModal(opts) {
   opts = opts || {};
   activeNote = {};
   const text = opts.text || "";
   document.getElementById("noteText").value = text;
-  noteSelectedTags = (opts.tags || []).slice();
-  renderNoteTagChips();
   document.getElementById("noteCategory").value = opts.category || "General";
+  updateNoteSeverityVisibility();
   const sev = document.getElementById("noteSeverity");
   const sevVal = document.getElementById("noteSeverityVal");
   sev.value = opts.severity || 0;
@@ -5635,12 +5536,9 @@ function saveNoteEntry() {
   if (!text) { alert("Enter what's going on (or Cancel)."); return; }
   const category = document.getElementById("noteCategory").value;
   const sevRaw = parseInt(document.getElementById("noteSeverity").value, 10);
-  const severity = sevRaw > 0 ? sevRaw : null;
+  const severity = category === "Health" && sevRaw > 0 ? sevRaw : null;
   if (!Array.isArray(state.intake.notes)) state.intake.notes = [];
-  state.intake.notes.push({
-    date: todayDate(), time: nowHHMM(), text, category, severity,
-    tags: noteSelectedTags.slice()
-  });
+  state.intake.notes.push({ date: todayDate(), time: nowHHMM(), text, category, severity });
   saveState();
   document.getElementById("noteModal").classList.remove("open");
   activeNote = null;
@@ -5653,7 +5551,7 @@ function saveNoteEntry() {
 // matching (same precedence as tryVoiceCategoryCreate), since a Note's whole
 // point is freeform text that shouldn't be forced through catalog matching.
 //   "note" / "note <text>" / "log note <text>" / "add note <text>"
-//     → opens the entry modal, pre-filled + tag-suggested via fastParseNote.
+//     → opens the entry modal, pre-filled + category-suggested via fastParseNote.
 //   "find note <text>" / "search note <text>" / "view log for <text>"
 //     → opens the filtered View Log (see openNoteLog(), built separately).
 // Returns true if handled.
@@ -5677,7 +5575,7 @@ function tryNoteVoiceCommand(text, opts) {
   if (logMatch) {
     const body = (logMatch[1] || "").trim();
     const parsed = fastParseNote(body);
-    openNoteModal({ text: body, tags: parsed.tags, category: parsed.category, severity: parsed.severity });
+    openNoteModal({ text: body, category: parsed.category, severity: parsed.severity });
     if (opts.fromVoice) speak(body ? "Note ready to save" : "Listening for your note");
     return true;
   }
@@ -5719,7 +5617,6 @@ function renderNoteLogResults(query, containerId, limit) {
   const q = (query || "").trim().toLowerCase();
   let filtered = q ? notes.filter(n =>
     (n.text || "").toLowerCase().includes(q) ||
-    (n.tags || []).some(t => t.toLowerCase().includes(q)) ||
     (n.category || "").toLowerCase().includes(q)
   ) : notes;
   if (limit) filtered = filtered.slice(0, limit);
@@ -5735,7 +5632,6 @@ function renderNoteLogResults(query, containerId, limit) {
     return `<div style="padding:8px 10px; border-bottom:1px solid var(--border);">` +
       `<div style="font-size:11px; color:var(--text-dim);">${escapeHtml(n.date)} ${escapeHtml(n.time)} · ${escapeHtml(n.category || "General")}${n.severity ? " · Severity " + n.severity + "/10" : ""}</div>` +
       `<div style="font-size:13px; margin:2px 0;">${escapeHtml(n.text)}</div>` +
-      (n.tags && n.tags.length ? `<div style="font-size:11px; color:var(--accent);">${n.tags.map(escapeHtml).join(", ")}</div>` : "") +
       (ctxParts.length ? `<div style="font-size:11px; color:var(--text-dim); margin-top:4px;">Prior 2h: ${ctxParts.join(" · ")}</div>` : "") +
       `</div>`;
   }).join("");
@@ -8039,16 +7935,7 @@ function wire() {
     activeNote = null;
   };
   document.getElementById("noteSave").onclick = saveNoteEntry;
-  document.getElementById("noteAddTagBtn").onclick = () => {
-    const input = document.getElementById("noteNewTagInput");
-    const name = input.value.trim();
-    if (!name) return;
-    if (addNoteTag(name, document.getElementById("noteCategory").value)) {
-      noteSelectedTags.push(name);
-      renderNoteTagChips();
-      input.value = "";
-    }
-  };
+  document.getElementById("noteCategory").addEventListener("change", updateNoteSeverityVisibility);
   document.getElementById("noteLogClose").onclick = () => document.getElementById("noteLogModal").classList.remove("open");
   document.getElementById("noteLogQuery").addEventListener("input", (e) => renderNoteLogResults(e.target.value, "noteLogResults"));
   const viewAllBtn = document.getElementById("healthNotesViewAll");
@@ -8280,8 +8167,6 @@ migrateTestResults();
 })();
 seedCommonCatalogItems();
 migrateVitaminNamePrefix();
-seedNoteTags();
-seedNoteTagsV2();
 document.getElementById("appVersionTag").textContent = APP_VERSION;
 document.getElementById("appVersionTagFooter").textContent = APP_VERSION;
 applyTheme();
