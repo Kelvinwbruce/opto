@@ -5353,7 +5353,16 @@ function fastParseNote(text) {
     const words = (tag.matchWords && tag.matchWords.length) ? tag.matchWords : [tag.name];
     const hit = words.some(w => {
       const wLower = (w || "").toLowerCase();
-      return wLower.length >= 3 && normalized.includes(wLower);
+      if (wLower.length < 3) return false;
+      if (normalized.includes(wLower)) return true;
+      // Multi-word phrases also match out of order — "pain in my left back"
+      // should still hit "back pain", since people don't always say the
+      // symptom in the exact word order it's stored under.
+      if (wLower.indexOf(" ") !== -1) {
+        const parts = wLower.split(/\s+/);
+        return parts.every(p => new RegExp("\\b" + p + "\\b").test(normalized));
+      }
+      return false;
     });
     if (hit) matched.push(tag);
   }
