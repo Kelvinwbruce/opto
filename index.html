@@ -1820,7 +1820,7 @@
 // Bump this on every deploy-worthy change — shown in the header and footer so
 // it's obvious at a glance whether a given device (phone vs desktop) has
 // actually picked up the latest deployed version after a reload.
-const APP_VERSION = "v75";
+const APP_VERSION = "v76";
 
 const STORAGE_KEY = "opto_app_v2";
 
@@ -7123,6 +7123,16 @@ function renderCustomCategoryButtons() {
 
 function anPickCategory(cat) {
   anSelected.cat = cat;
+  // Arriving here from an unmatched capture means the app already searched
+  // the catalog and found nothing — showing a "pick an existing item" list
+  // again is a redundant, confusing extra step. Skip straight to the
+  // pre-filled "add new item" form instead. The normal (non-capture) +Add Now
+  // flow is unaffected — it still shows the picker, since there's no
+  // known-unmatched text driving it.
+  if (anSelected.captureText) {
+    anAddNewItemForCategory(cat);
+    return;
+  }
   document.getElementById("anStep2Title").textContent = "Pick a " + cat.toLowerCase();
   const items = catalogForCategory(cat);
   const list = document.getElementById("anItemList");
