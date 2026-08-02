@@ -1820,7 +1820,7 @@
 // Bump this on every deploy-worthy change — shown in the header and footer so
 // it's obvious at a glance whether a given device (phone vs desktop) has
 // actually picked up the latest deployed version after a reload.
-const APP_VERSION = "v74";
+const APP_VERSION = "v75";
 
 const STORAGE_KEY = "opto_app_v2";
 
@@ -4666,7 +4666,7 @@ function intakeAddFieldHtml(f, idx) {
 let intakeAddCallback = null;
 let intakeAddCancelReopen = null;
 
-function openIntakeAddModal(tabId, onSaved, onCancelReopen) {
+function openIntakeAddModal(tabId, onSaved, onCancelReopen, defaultName) {
   const tab = INTAKE_TABS.find(t => t.id === tabId);
   if (!tab || tab.single) return;
   intakeAddCallback = onSaved || null;
@@ -4682,6 +4682,14 @@ function openIntakeAddModal(tabId, onSaved, onCancelReopen) {
       if (el) el.value = todayDate();
     }
   });
+  // Pre-fill the primary field (fields[0] — "name" for every category this
+  // is reachable from) with whatever text triggered this form, e.g. a
+  // captured voice/text item with no catalog match yet ("smoked salmon").
+  // Without this, that text was silently dropped and had to be retyped.
+  if (defaultName) {
+    const nameEl = document.getElementById("intakeAddField_0");
+    if (nameEl) nameEl.value = defaultName;
+  }
   modal.classList.add("open");
   setTimeout(() => { const first = document.getElementById("intakeAddField_0"); if (first) first.focus(); }, 60);
 }
@@ -7150,7 +7158,7 @@ function anAddNewItemForCategory(cat) {
   }, () => {
     document.getElementById("addNowFlowModal").classList.add("open");
     anPickCategory(cat);
-  });
+  }, anSelected.captureText);
 }
 
 function anPickItem(name, detail) {
