@@ -1845,7 +1845,7 @@
 // Bump this on every deploy-worthy change — shown in the header and footer so
 // it's obvious at a glance whether a given device (phone vs desktop) has
 // actually picked up the latest deployed version after a reload.
-const APP_VERSION = "v80";
+const APP_VERSION = "v81";
 
 const STORAGE_KEY = "opto_app_v2";
 
@@ -2377,7 +2377,7 @@ const NOTE_HEALTH_KEYWORDS = [
   "anxious","anxiety","nervous","stressed","stress","overwhelmed",
   "palpitations","heart racing","heart pounding","fluttering heart","heart rate","pulse",
   "eye","vision","blind spot","dead spot","blurry",
-  "pain","ache","hurt","hurts","sick","dizzi"
+  "pain","ache","hurt","hurts","sick","dizzi","sore","sprain","swollen","stiff"
 ];
 const NOTE_LEGAL_KEYWORDS = ["legal","lawyer","attorney","contract","dispute","sue","lawsuit","court"];
 
@@ -3607,7 +3607,10 @@ function renderMain() {
   function dateStrForDelta(delta) {
     return delta === -1 ? prevDateStr : (delta === 1 ? nextDateStr : viewDateStr);
   }
-  const cats = [...CATEGORY_REGISTRY.filter(c => c.mainRow).map(c => c.id), "Xcheck", "Notes"].sort();
+  // De-duplicated: a custom category can share an id with "Xcheck"/"Notes"
+  // (e.g. a leftover custom "Notes" category created before the real Notes
+  // feature existed) — without this, that collision renders the same row twice.
+  const cats = [...new Set([...CATEGORY_REGISTRY.filter(c => c.mainRow).map(c => c.id), "Xcheck", "Notes"])].sort();
   for (const cat of cats) {
     const items = sched.filter(s => s.cat === cat);
     const prevItems = needsPrevDay ? prevSched.filter(s => s.cat === cat) : [];
