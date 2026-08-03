@@ -492,7 +492,8 @@
     #navSmart { grid-column: 2; grid-row: 1; }
     #navTheme { grid-column: 3; grid-row: 1; }
     #navSettings { grid-column: 1; grid-row: 2; }
-    /* Columns 2-3 of row 2 are deliberately left empty here — Import/Backup
+    #navNotes { grid-column: 2; grid-row: 2; }
+    /* Column 3 of row 2 is deliberately left empty here — Import/Backup
        moved into the Settings modal, freeing this space for Reports or
        other upcoming buttons (Kelvin's request, 2026-08-02). */
     .menu-tools-grid #navAddEdit,
@@ -903,8 +904,12 @@
   /* Settings fills the whole screen on phone rather than floating as a
      centered card — it has enough content (and will gain more, e.g. Reports)
      that the usual modal sizing wastes space (Kelvin's request, 2026-08-02).
-     Desktop keeps the normal centered-modal treatment, unchanged. */
-  @media (max-width: 800px) {
+     Deliberately a narrower, phone-only breakpoint (480px) rather than the
+     app's usual 800px mobile cutoff — a desktop browser window that happens
+     to be under 800px (already triggering the normal mobile toolbar layout
+     elsewhere) should still get the regular centered popup here, not a
+     full-screen takeover; only an actual phone-width screen should. */
+  @media (max-width: 480px) {
     #settingsModal { padding: 0; }
     #settingsModal .modal {
       max-width: none; width: 100%; height: 100%; max-height: none;
@@ -1064,6 +1069,7 @@
       <button id="navSmart">Smart Recommend</button>
       <button id="navTheme">Theme</button>
       <button id="navSettings">Settings</button>
+      <button id="navNotes">Notes</button>
     </div>
   </div>
 </header>
@@ -1513,6 +1519,11 @@
 <div class="modal-bg" id="noteLogModal">
   <div class="modal" style="max-width: 640px;">
     <h3>Note Log</h3>
+    <div class="modal-row" style="display:flex; gap:6px;">
+      <button type="button" class="note-log-quick-filter" data-range="">Most Recent</button>
+      <button type="button" class="note-log-quick-filter" data-range="today">Today</button>
+      <button type="button" class="note-log-quick-filter" data-range="week">This Week</button>
+    </div>
     <div class="modal-row">
       <input id="noteLogQuery" type="text" placeholder="Search notes (category or text)…" style="width:100%; padding:6px 10px; background:var(--panel); color:var(--text); border:1px solid var(--border); border-radius:6px;" />
     </div>
@@ -1834,7 +1845,7 @@
 // Bump this on every deploy-worthy change — shown in the header and footer so
 // it's obvious at a glance whether a given device (phone vs desktop) has
 // actually picked up the latest deployed version after a reload.
-const APP_VERSION = "v78";
+const APP_VERSION = "v80";
 
 const STORAGE_KEY = "opto_app_v2";
 
@@ -3360,7 +3371,7 @@ function scheduleForDate(dateStr) {
   const plan = activePlanForDate(date);
   let items = plan ? plan.schedule.slice() : [];
   for (const log of (state.logs || []).filter(l => l.date === dateStr)) {
-    items.push({ cat: log.cat, time: log.time, name: log.name, detail: log.detail, _log: true, _logId: log.id });
+    items.push({ cat: log.cat, time: log.time, name: log.name, detail: log.detail, _log: true, _logId: log.id, _noteId: log._noteId });
   }
   for (const v of state.intake.doctorVisits || []) {
     if (v.date === dateStr) {
@@ -3596,7 +3607,7 @@ function renderMain() {
   function dateStrForDelta(delta) {
     return delta === -1 ? prevDateStr : (delta === 1 ? nextDateStr : viewDateStr);
   }
-  const cats = [...CATEGORY_REGISTRY.filter(c => c.mainRow).map(c => c.id), "Xcheck"].sort();
+  const cats = [...CATEGORY_REGISTRY.filter(c => c.mainRow).map(c => c.id), "Xcheck", "Notes"].sort();
   for (const cat of cats) {
     const items = sched.filter(s => s.cat === cat);
     const prevItems = needsPrevDay ? prevSched.filter(s => s.cat === cat) : [];
@@ -3661,6 +3672,11 @@ function renderMain() {
       if (!item) return;
       if (item.cat === "Test") {
         openTestResultModal(item, pillDateStr); // handles both planned and logged test entries
+      } else if (item.cat === "Notes") {
+        // Reuse the Note Log rather than a one-off viewer — searching by this
+        // note's own text surfaces it (plus anything else related) with the
+        // same Food/Test correlation context Notes already gets elsewhere.
+        if (typeof openNoteLog === "function") openNoteLog(item.detail || "");
       } else if (item._log) {
         // Real-time entries are already confirmed by their creation — no tap
         // needed, so a tap here is free to do something more useful. If this
@@ -3687,6 +3703,9 @@ function renderMain() {
       if (item._log) {
         if (confirm("Delete \"" + item.name + "\" from " + pillDateStr + "'s log?")) {
           state.logs = (state.logs||[]).filter(l => l.id !== item._logId);
+          if (item.cat === "Notes" && item._noteId) {
+            state.intake.notes = (state.intake.notes || []).filter(n => n.id !== item._noteId);
+          }
           saveState();
           renderMain();
         }
@@ -3720,6 +3739,9 @@ function renderMain() {
       if (item && item._log) {
         if (confirm("Delete \"" + item.name + "\" from " + pillDateStr + "'s log?")) {
           state.logs = (state.logs||[]).filter(l => l.id !== item._logId);
+          if (item.cat === "Notes" && item._noteId) {
+            state.intake.notes = (state.intake.notes || []).filter(n => n.id !== item._noteId);
+          }
           saveState();
           renderMain();
         }
@@ -5572,6 +5594,10 @@ function openNoteModal(opts) {
   setTimeout(() => document.getElementById("noteText").focus(), 60);
 }
 
+// Short code shown on the Main-timeline pill per category — kept as a single
+// lookup so the Notes row and any other Notes UI stay in sync automatically.
+const NOTE_CATEGORY_PILL_CODE = { Health: "N-H", Legal: "N-L", General: "N-G" };
+
 function saveNoteEntry() {
   const text = document.getElementById("noteText").value.trim();
   if (!text) { alert("Enter what's going on (or Cancel)."); return; }
@@ -5579,7 +5605,28 @@ function saveNoteEntry() {
   const sevRaw = parseInt(document.getElementById("noteSeverity").value, 10);
   const severity = category === "Health" && sevRaw > 0 ? sevRaw : null;
   if (!Array.isArray(state.intake.notes)) state.intake.notes = [];
-  state.intake.notes.push({ date: todayDate(), time: nowHHMM(), text, category, severity });
+  const date = todayDate();
+  const time = nowHHMM();
+  const id = "note_" + Date.now() + "_" + Math.floor(Math.random() * 1000);
+  state.intake.notes.push({ id, date, time, text, category, severity });
+
+  // Companion Main-timeline pill — a plain state.logs entry with cat:"Notes",
+  // same pattern the existing "Xcheck" row already uses (see pushSyncTestMarker()),
+  // so it rides the Main timeline's existing generic row/pill rendering for
+  // free rather than needing special layout code. _log:true shows it as an
+  // already-confirmed (blue) pill, matching every other real-time capture.
+  state.logs = state.logs || [];
+  state.logs.push({
+    id: "l_" + Date.now(),
+    date, time,
+    cat: "Notes",
+    name: NOTE_CATEGORY_PILL_CODE[category] || "N-G",
+    detail: text,
+    _log: true,
+    _addedAt: Date.now(),
+    _noteId: id
+  });
+
   saveState();
   document.getElementById("noteModal").classList.remove("open");
   activeNote = null;
@@ -5651,15 +5698,33 @@ function getNoteContext(note) {
 // Renders a filtered/searched note list into any container (Health page's
 // always-visible recent list, or the full Note Log modal) — same rendering,
 // different scope, so the two views can't silently drift apart.
+// Quick-filter state for the Note Log modal only — "" (Most Recent),
+// "today", or "week". Deliberately NOT applied to the Health page's always-
+// visible recent-15 list (containerId "healthNotesList"), which should keep
+// showing your latest notes regardless of whatever filter was last picked
+// in the modal.
+let noteLogDateRange = "";
+function noteInDateRange(note, range) {
+  if (!range) return true;
+  if (range === "today") return note.date === todayDate();
+  if (range === "week") {
+    const cutoff = dateStrPlusDays(todayDate(), -6);
+    return note.date >= cutoff && note.date <= todayDate();
+  }
+  return true;
+}
+
 function renderNoteLogResults(query, containerId, limit) {
   const list = document.getElementById(containerId || "noteLogResults");
   if (!list) return;
+  const isMainLogView = !containerId || containerId === "noteLogResults";
   const notes = (state.intake.notes || []).slice().sort((a, b) => (b.date + b.time).localeCompare(a.date + a.time));
   const q = (query || "").trim().toLowerCase();
-  let filtered = q ? notes.filter(n =>
+  let filtered = isMainLogView ? notes.filter(n => noteInDateRange(n, noteLogDateRange)) : notes;
+  if (q) filtered = filtered.filter(n =>
     (n.text || "").toLowerCase().includes(q) ||
     (n.category || "").toLowerCase().includes(q)
-  ) : notes;
+  );
   if (limit) filtered = filtered.slice(0, limit);
   if (filtered.length === 0) {
     list.innerHTML = '<div style="color:var(--text-dim); font-size:12px;">No notes found' + (q ? ' for "' + escapeHtml(query) + '"' : (containerId === "healthNotesList" ? ". Say \"Note ...\" from Capture to add one." : ".")) + '</div>';
@@ -5678,9 +5743,25 @@ function renderNoteLogResults(query, containerId, limit) {
   }).join("");
 }
 
+// Highlights whichever quick-filter button matches the current
+// noteLogDateRange — shared by openNoteLog() and each button's own click.
+function updateNoteLogFilterButtons() {
+  document.querySelectorAll(".note-log-quick-filter").forEach(btn => {
+    const isActive = (btn.dataset.range || "") === noteLogDateRange;
+    btn.style.background = isActive ? "var(--accent)" : "";
+    btn.style.color = isActive ? "#0f1419" : "";
+    btn.style.fontWeight = isActive ? "700" : "";
+  });
+}
+
 function openNoteLog(query) {
   const modal = document.getElementById("noteLogModal");
   if (!modal) return;
+  // Reset to Most Recent each time this opens fresh — a filter left over
+  // from a previous visit (e.g. "Today") could otherwise hide results when
+  // arriving here from a timeline-pill tap or voice search for older notes.
+  noteLogDateRange = "";
+  updateNoteLogFilterButtons();
   document.getElementById("noteLogQuery").value = query || "";
   renderNoteLogResults(query || "", "noteLogResults");
   modal.classList.add("open");
@@ -7990,6 +8071,14 @@ function wire() {
   document.getElementById("noteSave").onclick = saveNoteEntry;
   document.getElementById("noteCategory").addEventListener("change", updateNoteSeverityVisibility);
   document.getElementById("noteLogClose").onclick = () => document.getElementById("noteLogModal").classList.remove("open");
+  document.getElementById("navNotes").addEventListener("click", () => openNoteLog(""));
+  document.querySelectorAll(".note-log-quick-filter").forEach(btn => {
+    btn.onclick = () => {
+      noteLogDateRange = btn.dataset.range || "";
+      updateNoteLogFilterButtons();
+      renderNoteLogResults(document.getElementById("noteLogQuery").value, "noteLogResults");
+    };
+  });
   document.getElementById("noteLogQuery").addEventListener("input", (e) => renderNoteLogResults(e.target.value, "noteLogResults"));
   const viewAllBtn = document.getElementById("healthNotesViewAll");
   if (viewAllBtn) viewAllBtn.onclick = () => openNoteLog("");
