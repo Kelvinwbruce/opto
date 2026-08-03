@@ -491,9 +491,10 @@
     #navAnalysis { grid-column: 1; grid-row: 1; }
     #navSmart { grid-column: 2; grid-row: 1; }
     #navTheme { grid-column: 3; grid-row: 1; }
-    #navImport { grid-column: 1; grid-row: 2; }
-    #navExport { grid-column: 2; grid-row: 2; }
-    #navSettings { grid-column: 3; grid-row: 2; }
+    #navSettings { grid-column: 1; grid-row: 2; }
+    /* Columns 2-3 of row 2 are deliberately left empty here — Import/Backup
+       moved into the Settings modal, freeing this space for Reports or
+       other upcoming buttons (Kelvin's request, 2026-08-02). */
     .menu-tools-grid #navAddEdit,
     .menu-tools-grid #timeAdd {
       grid-column: 4;
@@ -899,6 +900,18 @@
   .modal-row input, .modal-row select { width: 100%; }
   .modal-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 14px; flex-wrap: wrap; }
 
+  /* Settings fills the whole screen on phone rather than floating as a
+     centered card — it has enough content (and will gain more, e.g. Reports)
+     that the usual modal sizing wastes space (Kelvin's request, 2026-08-02).
+     Desktop keeps the normal centered-modal treatment, unchanged. */
+  @media (max-width: 800px) {
+    #settingsModal { padding: 0; }
+    #settingsModal .modal {
+      max-width: none; width: 100%; height: 100%; max-height: none;
+      border-radius: 0; border: none;
+    }
+  }
+
   /* Phone-friendly Add Item modal (Intake tab) — larger tap targets, 16px
      inputs to avoid iOS auto-zoom-on-focus, single column (inherited). */
   #intakeAddModal .modal-row input,
@@ -1050,8 +1063,6 @@
       <button id="navAnalysis">Analysis</button>
       <button id="navSmart">Smart Recommend</button>
       <button id="navTheme">Theme</button>
-      <button id="navImport">Import</button>
-      <button id="navExport">💾 Backup</button>
       <button id="navSettings">Settings</button>
     </div>
   </div>
@@ -1331,10 +1342,13 @@
 <div class="modal-bg" id="settingsModal">
   <div class="modal">
     <h3>Settings</h3>
+    <div class="modal-row" style="display:flex; gap:8px;">
+      <button id="setNavImport" type="button" style="flex:1;">Import</button>
+      <button id="setNavExport" type="button" style="flex:1;">💾 Backup</button>
+    </div>
     <div class="modal-row"><label>Your name (shows in header)</label><input id="setName" type="text" placeholder="e.g. Kelvin" /></div>
     <div class="modal-row"><label>Wake time</label><input id="setWake" type="time" /></div>
     <div class="modal-row"><label>Bed time</label><input id="setBed" type="time" /></div>
-    <div class="modal-row"><label>Caffeine cutoff</label><input id="setCaff" type="time" /></div>
     <div class="modal-row">
       <label>Claude API key (enables photo extraction & AI analysis — optional)</label>
       <input id="setApiKey" type="password" placeholder="sk-ant-..." autocomplete="off" />
@@ -1820,7 +1834,7 @@
 // Bump this on every deploy-worthy change — shown in the header and footer so
 // it's obvious at a glance whether a given device (phone vs desktop) has
 // actually picked up the latest deployed version after a reload.
-const APP_VERSION = "v76";
+const APP_VERSION = "v78";
 
 const STORAGE_KEY = "opto_app_v2";
 
@@ -5180,7 +5194,7 @@ function handleVoiceCategoryPick(catId, itemName, opts) {
   if (matched) {
     // Test category → jump directly to reading input modal
     if (catId === "Test" && typeof openTestResultModal === "function") {
-      openTestResultModal({ name: matched.name, time: nowHHMM(), _captureMode: true, _voiceTranscript: opts.transcript || "" });
+      openTestResultModal({ name: matched.name, time: nowHHMM(), _captureMode: true, _voiceTranscript: opts.transcript || "", _voicePrefillReading: extractReadingFromVoiceText(itemName, matched.name) });
       if (opts.fromVoice) speak("Opening " + matched.name);
       return true;
     }
@@ -5299,6 +5313,25 @@ function normalizeVoiceText(text) {
   return result;
 }
 
+// Pulls a reading value out of a voice/text phrase that already matched a
+// Test item — "Glucose 105" → "105", "Blood pressure 120 over 80" (or
+// "120/80") → "120/80". Deliberately NOT run through normalizeVoiceText():
+// only the piece of text after the item name is searched, so its
+// letter+digit merging isn't needed here and would risk mangling "120 over
+// 80" → "120over80". Returns "" (no prefill) rather than guessing when
+// nothing number-shaped follows the item name — never blocks manual entry.
+function extractReadingFromVoiceText(text, itemName) {
+  if (!text || !itemName) return "";
+  const lower = text.toLowerCase();
+  const nameLower = itemName.toLowerCase();
+  const idx = lower.indexOf(nameLower);
+  const after = idx === -1 ? lower : lower.slice(idx + nameLower.length);
+  const bp = after.match(/(\d+)\s*(?:\/|over)\s*(\d+)/);
+  if (bp) return bp[1] + "/" + bp[2];
+  const num = after.match(/(\d+(?:\.\d+)?)/);
+  return num ? num[1] : "";
+}
+
 // ============================================================================
 // FAST NOTE PARSER — local keyword/number matching, no external API. Suggests
 // just a category (Health/Legal/General — see NOTE_HEALTH_KEYWORDS/
@@ -5414,7 +5447,7 @@ function tryDirectItemVoiceMatch(text, opts) {
   if (match.unique) {
     // Test: open the rich reading modal instead of Add Now flow
     if (match.cat === "Test" && typeof openTestResultModal === "function") {
-      openTestResultModal({ name: match.item, time: nowHHMM(), _captureMode: true, _voiceTranscript: opts.transcript || "" });
+      openTestResultModal({ name: match.item, time: nowHHMM(), _captureMode: true, _voiceTranscript: opts.transcript || "", _voicePrefillReading: extractReadingFromVoiceText(opts.transcript || text, match.item) });
       if (opts.fromVoice) speak("Opening " + match.item);
       return true;
     }
@@ -6509,6 +6542,10 @@ function openTestResultModal(item, dateStr) {
   document.getElementById("trNotes").value = (existing && existing.notes) || "";
 
   const readings = (existing && existing.readings) ? existing.readings.slice() : [{ value:"", time: nowHHMM() }];
+  // Pre-fill from a voice reading spoken alongside the item name ("Glucose
+  // 105") — only when there's no existing saved reading for this slot to
+  // overwrite, and always still editable before Save.
+  if (!existing && item._voicePrefillReading) readings[0].value = item._voicePrefillReading;
   const best = pickBestReading(item.name, readings);
   renderReadingsInputs(readings, best);
 
@@ -7720,7 +7757,6 @@ function wire() {
     document.getElementById("setWake").value = state.settings.wake;
     updateBackupStatus();
     document.getElementById("setBed").value = state.settings.bed;
-    document.getElementById("setCaff").value = state.settings.caffCutoff;
     document.getElementById("setGoal").value = state.settings.goal;
     document.getElementById("setVoiceConfirm").checked = !!state.settings.voiceConfirmations;
     updateBackupStatus();
@@ -7747,7 +7783,6 @@ function wire() {
     state.settings.claudeApiKey = document.getElementById("setApiKey").value.trim();
     state.settings.wake = document.getElementById("setWake").value;
     state.settings.bed = document.getElementById("setBed").value;
-    state.settings.caffCutoff = document.getElementById("setCaff").value;
     state.settings.goal = document.getElementById("setGoal").value;
     state.settings.voiceConfirmations = document.getElementById("setVoiceConfirm").checked;
     saveState();
@@ -7862,8 +7897,8 @@ function wire() {
     saveState();
   };
   document.getElementById("ingredientViewClose").onclick = () => document.getElementById("ingredientViewModal").classList.remove("open");
-  document.getElementById("navExport").addEventListener("click", exportData);
-  document.getElementById("navImport").addEventListener("click", importData);
+  document.getElementById("setNavExport").addEventListener("click", exportData);
+  document.getElementById("setNavImport").addEventListener("click", importData);
   document.getElementById("navAddEdit").addEventListener("click", () => openAddNowFlow({ mode: "log", allowDateTime: true }));
   document.getElementById("navAnalysis").addEventListener("click", openAnalysis);
   document.getElementById("navSmart").addEventListener("click", () => {
