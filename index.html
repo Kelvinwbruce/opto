@@ -564,29 +564,22 @@
   .intake-nav button:hover:not(.active) { color: var(--text); }
   /* .card's overflow:hidden (used elsewhere to clip its accent-bar pseudo-
      element / rounded corners) breaks position:sticky for anything inside
-     it — a sticky element can't stick past the bounds of a clipping
-     ancestor, so the toolbar/thead sticky rules below would silently no-op
-     without this override. Scoped to intake-content only; every other
-     .card keeps its normal clipping. */
-  .intake-content { overflow: visible; }
-  /* The table's own bounded scroll region, on EVERY screen size (previously
-     desktop-only — mobile just let the whole page scroll instead, which
-     is what let the column headers scroll out of view with nothing pinned).
-     overflow-x:auto (for wide tables on narrow phones) unavoidably forces
-     overflow-y to also compute as "auto" per the CSS overflow spec — a
-     browser can't leave one axis truly "visible" while the other isn't, so
-     an explicit overflow-y:visible override doesn't actually stick. Rather
-     than fight that, this embraces it: .table-wrap becomes the real,
-     bounded, internally-scrolling container on mobile too, with its own
-     sticky thead (top:0, relative to THIS box) — the same working pattern
-     desktop already had, just no longer gated to min-width:801px. Height
-     uses the JS-measured --intake-toolbar-h (see updateIntakeToolbarHeightVar)
-     instead of a fixed guess, since the toolbar's own height varies by
-     category and can wrap onto 2 lines on narrow phones. */
-  .intake-content .table-wrap {
-    overflow-x: auto; overflow-y: auto;
-    max-height: calc(100vh - var(--header-h, 70px) - var(--intake-toolbar-h, 46px) - 16px);
-  }
+     it. Scoped to intake-content only; every other .card keeps its normal
+     clipping. */
+  /* Keeps scrollIntoView() (nav button click handler, renderIntake()) from
+     landing this content underneath the sticky app header — scroll-margin-top
+     is exactly what this property exists for. */
+  .intake-content { overflow: visible; scroll-margin-top: var(--header-h, 70px); }
+  /* Deliberately NOT a bounded/internally-scrolling box (tried that
+     2026-08-18, reverted — the max-height calc fought with the browser's
+     own scrollbar reflow and caused a visible jump scrolling near the
+     bottom of a long list). The table just grows naturally with the page
+     now, matching how Drink (a narrow table, never needed horizontal
+     scroll, never hit this) already behaved — consistent behavior across
+     every category. Sticky column headers on wide tables (Food, Vitamins)
+     are a known remaining gap, deliberately not addressed here — see
+     table.data thead th below. */
+  .intake-content .table-wrap { overflow-x: auto; }
   table.data {
     /* min-width so a short table still fills its container, but width:auto
        (via max-content) lets it grow past that when columns need more room —
@@ -599,12 +592,13 @@
   }
   table.data th, table.data td { padding: 6px 8px; border-bottom: 1px solid var(--border); text-align: left; vertical-align: top; }
   table.data th { color: var(--text-dim); font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; font-weight: 700; background: var(--panel-2); }
-  /* Sticky column headers on EVERY screen size, not just desktop (>800px)
-     as before — .table-wrap is now the bounded scroll container on mobile
-     too (see above), so top:0 sticks to THAT box's own top edge, right
-     below the (separately, page-level sticky) toolbar bar — not the page
-     itself (Kelvin's request, 2026-08-18 — column headers were scrolling
-     out of view on phone with nothing to show what each column means). */
+  /* Best-effort only — position:sticky here works for tables that never
+     need .table-wrap's overflow-x:auto to actually scroll (e.g. Drink),
+     but not reliably for wide ones (Food, Vitamins) that do, since that
+     scroll context and the sticky context end up coupled. Not actively
+     fixed right now (Kelvin, 2026-08-18: "don't want to worry about that
+     yet") — the real fix for this session was scroll-to-top-on-category-
+     select instead, see the nav button click handler in renderIntake(). */
   .intake-content table.data thead th {
     position: sticky; top: 0;
     z-index: 2; box-shadow: 0 1px 0 var(--border);
@@ -1870,7 +1864,7 @@
 // Bump this on every deploy-worthy change — shown in the header and footer so
 // it's obvious at a glance whether a given device (phone vs desktop) has
 // actually picked up the latest deployed version after a reload.
-const APP_VERSION = "v83";
+const APP_VERSION = "v85";
 
 const STORAGE_KEY = "opto_app_v2";
 
@@ -3566,6 +3560,13 @@ function cleanupStalePlanStatus() {
   if (changed) saveState();
 }
 
+// Rows that stay visible in the Main-page timeline grid even with zero
+// items in the current view window — everything else still hides itself
+// when empty, same as before. Plain category ids, so this works for
+// built-in categories (Drink, Exercise, Food, Medication, Snack, Vitamin)
+// and custom ones (Fruit) identically.
+const ALWAYS_VISIBLE_MAIN_ROWS = ["Drink", "Exercise", "Food", "Fruit", "Medication", "Snack", "Vitamin"];
+
 function renderMain() {
   cleanupStalePlanStatus();
   const todayReal = new Date();
@@ -3709,7 +3710,13 @@ function renderMain() {
     const items = sched.filter(s => s.cat === cat);
     const prevItems = needsPrevDay ? prevSched.filter(s => s.cat === cat) : [];
     const nextItems = needsNextDay ? nextSched.filter(s => s.cat === cat) : [];
-    if (items.length === 0 && prevItems.length === 0 && nextItems.length === 0) continue;
+    // ALWAYS_VISIBLE_MAIN_ROWS keeps a chosen set of rows in the grid even
+    // with nothing scheduled nearby, rather than the whole grid shrinking
+    // down to just the header when there's no activity in the visible
+    // window (Kelvin's request, 2026-08-18 — the specific set is exactly
+    // what he showed by seeding a real item into each one).
+    const alwaysShow = ALWAYS_VISIBLE_MAIN_ROWS.includes(cat);
+    if (!alwaysShow && items.length === 0 && prevItems.length === 0 && nextItems.length === 0) continue;
     html += `<tr data-cat="${cat}"><td class="cat">${cat}</td>`;
     for (let i = 0; i < cols.length; i++) {
       const c = cols[i];
@@ -4514,15 +4521,15 @@ function renderIntake() {
       state.ui.intakeTab = t.id;
       saveState();
       renderIntake();
-      // On narrow screens the nav/content grid collapses to one stacked column
-      // (see .intake-layout media query) — the content renders below the full
-      // list of category buttons, off-screen, with no visible sign anything
-      // happened. Scroll it into view so tapping a category actually reads as
-      // "opening" it, matching desktop's side-by-side behavior.
-      if (window.matchMedia("(max-width: 800px)").matches) {
-        const contentEl = document.getElementById("intakeContent");
-        if (contentEl && contentEl.scrollIntoView) contentEl.scrollIntoView({ behavior: "smooth", block: "start" });
-      }
+      // Scroll the selected category's header to the top of the viewport on
+      // EVERY screen size, not just narrow ones as before — clicking a
+      // category (mobile: stacked below a long nav list; desktop: the page
+      // may already be scrolled from browsing a long category list) should
+      // consistently land you right at that category's own header, not
+      // wherever the page happened to be. #intakeContent's scroll-margin-top
+      // (below) keeps this from landing underneath the sticky app header.
+      const contentEl = document.getElementById("intakeContent");
+      if (contentEl && contentEl.scrollIntoView) contentEl.scrollIntoView({ behavior: "smooth", block: "start" });
     };
     if (isCustomCat(t.id)) {
       const row = document.createElement("div");
