@@ -1845,7 +1845,7 @@
 // Bump this on every deploy-worthy change — shown in the header and footer so
 // it's obvious at a glance whether a given device (phone vs desktop) has
 // actually picked up the latest deployed version after a reload.
-const APP_VERSION = "v81";
+const APP_VERSION = "v82";
 
 const STORAGE_KEY = "opto_app_v2";
 
@@ -2487,10 +2487,24 @@ function clearWarning(id) {
 function renderWarningBanner() {
   const el = document.getElementById("systemWarningBanner");
   if (!el) return;
-  const ids = Object.keys(activeWarnings);
+  let ids = Object.keys(activeWarnings);
   if (ids.length === 0) { el.style.display = "none"; el.innerHTML = ""; return; }
   el.style.display = "flex";
-  el.innerHTML = ids.map(id => {
+  // Backup and phone-sync permission loss tend to happen together (e.g. the
+  // Google Drive letter briefly vanishing breaks both at once) — collapse
+  // that specific pair into one combined row with one "Reconnect All" action
+  // instead of two separate rows needing two separate clicks. Any other
+  // warning (including either of these two alone) still renders normally.
+  const hasCombo = ids.includes("backup-permission") && ids.includes("phonesync-permission");
+  const comboHtml = hasCombo
+    ? `<div class="sys-warning-row" data-warn-id="combo-permissions">` +
+      `<span class="sys-warning-msg">⚠ Auto-backup and phone sync have both lost file permission and stopped working.</span>` +
+      `<button type="button" class="sys-warning-action" data-combo-reconnect="1">Reconnect All</button>` +
+      `<button type="button" class="sys-warning-dismiss" data-combo-dismiss="1" aria-label="Dismiss">×</button>` +
+      `</div>`
+    : "";
+  if (hasCombo) ids = ids.filter(id => id !== "backup-permission" && id !== "phonesync-permission");
+  el.innerHTML = comboHtml + ids.map(id => {
     const w = activeWarnings[id];
     return `<div class="sys-warning-row" data-warn-id="${escapeHtml(id)}">` +
       `<span class="sys-warning-msg">⚠ ${escapeHtml(w.message)}</span>` +
@@ -2498,10 +2512,14 @@ function renderWarningBanner() {
       `<button type="button" class="sys-warning-dismiss" data-warn-id="${escapeHtml(id)}" aria-label="Dismiss">×</button>` +
       `</div>`;
   }).join("");
-  el.querySelectorAll(".sys-warning-action").forEach(btn => {
+  const comboReconnectBtn = el.querySelector("[data-combo-reconnect]");
+  if (comboReconnectBtn) comboReconnectBtn.onclick = reconnectAllPermissions;
+  const comboDismissBtn = el.querySelector("[data-combo-dismiss]");
+  if (comboDismissBtn) comboDismissBtn.onclick = () => { clearWarning("backup-permission"); clearWarning("phonesync-permission"); };
+  el.querySelectorAll(".sys-warning-action[data-warn-id]").forEach(btn => {
     btn.onclick = () => { const w = activeWarnings[btn.dataset.warnId]; if (w && w.actionFn) w.actionFn(); };
   });
-  el.querySelectorAll(".sys-warning-dismiss").forEach(btn => {
+  el.querySelectorAll(".sys-warning-dismiss[data-warn-id]").forEach(btn => {
     btn.onclick = () => clearWarning(btn.dataset.warnId);
   });
 }
@@ -2826,6 +2844,57 @@ async function reconnectBackupPermission() {
   } catch (e) {
     alert("Reconnect failed: " + e.message + "\n\nTry Settings → Auto-backup → Connect backup file… to pick it again.");
   }
+}
+
+// Combines the backup-file and phone-sync reconnect flows into one click —
+// both requestPermission() calls run inside the same user gesture's
+// activation window, so one tap can re-grant both instead of needing two
+// separate reconnects in two different places (Kelvin's request, 2026-08-17,
+// after both broke together when the Google Drive letter briefly vanished).
+// Individual status/reconnect still lives in Settings, unchanged, for anyone
+// who wants to check just one of the two.
+async function reconnectAllPermissions() {
+  clearWarning("backup-permission");
+  clearWarning("phonesync-permission");
+  const results = [];
+
+  if (backupHandle) {
+    try {
+      const req = await backupHandle.requestPermission({ mode: "readwrite" });
+      if (req === "granted") {
+        const ok = await writeBackupNow();
+        results.push("Backup: " + (ok ? "reconnected ✓" : "permission granted, but write still failed"));
+      } else {
+        results.push("Backup: permission still not granted");
+      }
+    } catch (e) {
+      results.push("Backup: " + e.message);
+    }
+  }
+
+  if (phoneSyncHandle) {
+    try {
+      const req = await phoneSyncHandle.requestPermission({ mode: "read" });
+      if (req === "granted") {
+        phoneSyncPermissionLost = false;
+        await syncFromPhoneNow(true); // silent: its own success toast still fires; suppress its separate alert on failure so this summary is the one message shown
+        results.push("Phone sync: reconnected ✓");
+      } else {
+        results.push("Phone sync: permission still not granted");
+      }
+    } catch (e) {
+      results.push("Phone sync: " + e.message);
+    }
+  }
+
+  updateBackupStatus();
+  updatePhoneSyncStatus();
+
+  if (results.length === 0) {
+    alert("Nothing to reconnect — no backup file or phone sync file is currently connected.");
+    return;
+  }
+  alert(results.join("\n") + (results.some(r => !r.includes("✓")) ? "\n\nFor anything still not fixed, check Settings → Auto-backup / Auto-sync to reconnect that one individually." : ""));
 }
 
 function scheduleBackup() {
