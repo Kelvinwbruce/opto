@@ -562,16 +562,30 @@
   }
   .intake-nav button.active { background: var(--panel); color: var(--text); border-color: var(--page-accent, var(--border)); font-weight: 600; box-shadow: inset 3px 0 0 var(--page-accent, transparent); }
   .intake-nav button:hover:not(.active) { color: var(--text); }
-  .intake-content .table-wrap { overflow-x: auto; }
-  /* The table's own scroll region — bounded height so a long list (e.g. 75
-     vitamins) scrolls internally with a sticky header, instead of growing
-     the whole page (which would push the sidebar's lower categories out of
-     reach along with it). overflow-x:auto above already implies a scroll
-     container, but since nothing actually scrolls vertically inside it
-     (the page does), sticky wouldn't stick to it — this makes it the real
-     vertical scroll container too, matching where sticky is anchored. */
-  @media (min-width: 801px) {
-    .intake-content .table-wrap { max-height: calc(100vh - var(--header-h, 70px) - 130px); overflow-y: auto; }
+  /* .card's overflow:hidden (used elsewhere to clip its accent-bar pseudo-
+     element / rounded corners) breaks position:sticky for anything inside
+     it — a sticky element can't stick past the bounds of a clipping
+     ancestor, so the toolbar/thead sticky rules below would silently no-op
+     without this override. Scoped to intake-content only; every other
+     .card keeps its normal clipping. */
+  .intake-content { overflow: visible; }
+  /* The table's own bounded scroll region, on EVERY screen size (previously
+     desktop-only — mobile just let the whole page scroll instead, which
+     is what let the column headers scroll out of view with nothing pinned).
+     overflow-x:auto (for wide tables on narrow phones) unavoidably forces
+     overflow-y to also compute as "auto" per the CSS overflow spec — a
+     browser can't leave one axis truly "visible" while the other isn't, so
+     an explicit overflow-y:visible override doesn't actually stick. Rather
+     than fight that, this embraces it: .table-wrap becomes the real,
+     bounded, internally-scrolling container on mobile too, with its own
+     sticky thead (top:0, relative to THIS box) — the same working pattern
+     desktop already had, just no longer gated to min-width:801px. Height
+     uses the JS-measured --intake-toolbar-h (see updateIntakeToolbarHeightVar)
+     instead of a fixed guess, since the toolbar's own height varies by
+     category and can wrap onto 2 lines on narrow phones. */
+  .intake-content .table-wrap {
+    overflow-x: auto; overflow-y: auto;
+    max-height: calc(100vh - var(--header-h, 70px) - var(--intake-toolbar-h, 46px) - 16px);
   }
   table.data {
     /* min-width so a short table still fills its container, but width:auto
@@ -585,8 +599,15 @@
   }
   table.data th, table.data td { padding: 6px 8px; border-bottom: 1px solid var(--border); text-align: left; vertical-align: top; }
   table.data th { color: var(--text-dim); font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; font-weight: 700; background: var(--panel-2); }
-  @media (min-width: 801px) {
-    .intake-content table.data thead th { position: sticky; top: 0; z-index: 2; box-shadow: 0 1px 0 var(--border); }
+  /* Sticky column headers on EVERY screen size, not just desktop (>800px)
+     as before — .table-wrap is now the bounded scroll container on mobile
+     too (see above), so top:0 sticks to THAT box's own top edge, right
+     below the (separately, page-level sticky) toolbar bar — not the page
+     itself (Kelvin's request, 2026-08-18 — column headers were scrolling
+     out of view on phone with nothing to show what each column means). */
+  .intake-content table.data thead th {
+    position: sticky; top: 0;
+    z-index: 2; box-shadow: 0 1px 0 var(--border);
   }
   table.data input { width: 100%; padding: 4px 6px; font-size: 12px; background: transparent; border: 1px solid transparent; }
   table.data input:hover, table.data input:focus { background: var(--panel-2); border-color: var(--border); }
@@ -596,7 +617,11 @@
   }
   table.data td button.row-del:hover { color: var(--danger); }
 
-  .intake-toolbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; gap: 8px; flex-wrap: wrap; }
+  .intake-toolbar {
+    display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap;
+    position: sticky; top: var(--header-h, 70px); z-index: 3;
+    background: var(--panel); padding: 8px 0; margin: -8px 0 0;
+  }
   .intake-toolbar h2 { margin: 0; font-size: 16px; }
   .intake-toolbar .desc { color: var(--text-dim); font-size: 12px; margin-left: 4px; }
 
@@ -1845,7 +1870,7 @@
 // Bump this on every deploy-worthy change — shown in the header and footer so
 // it's obvious at a glance whether a given device (phone vs desktop) has
 // actually picked up the latest deployed version after a reload.
-const APP_VERSION = "v82";
+const APP_VERSION = "v83";
 
 const STORAGE_KEY = "opto_app_v2";
 
@@ -4554,6 +4579,7 @@ function renderIntake() {
       });
     });
     content.querySelector("#intakeAddCatBtn").onclick = openAddCategoryModal;
+    updateIntakeToolbarHeightVar();
     return;
   }
 
@@ -4729,6 +4755,7 @@ function renderIntake() {
       }
     };
   });
+  updateIntakeToolbarHeightVar();
 }
 
 // ============================================================================
@@ -7814,6 +7841,18 @@ function updateHeaderHeightVar() {
   if (h) document.documentElement.style.setProperty("--header-h", h.getBoundingClientRect().height + "px");
 }
 window.addEventListener("resize", updateHeaderHeightVar);
+
+// Same reasoning as --header-h above, one level down: the Intake toolbar
+// ("Food · 24 entries · +Add Category · +Add Item") is itself sticky now,
+// and the table's column headers stick just below IT — but the toolbar's
+// height varies by category (Vitamin's extra Export/Import/Favorites
+// buttons wrap onto a second line on narrow phones) and by viewport width,
+// so a hardcoded offset would drift. Called after every renderIntake().
+function updateIntakeToolbarHeightVar() {
+  const t = document.querySelector(".intake-toolbar");
+  if (t) document.documentElement.style.setProperty("--intake-toolbar-h", t.getBoundingClientRect().height + "px");
+}
+window.addEventListener("resize", updateIntakeToolbarHeightVar);
 
 // Mobile-only Main-page layout: relocates a few existing controls (never
 // duplicates them, so there's exactly one #timeAdd / #timeNow / #planApplied
