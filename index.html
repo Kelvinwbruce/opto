@@ -507,15 +507,19 @@
          top:0, while any non-zero offset works fine. Kept as a harmless
          defensive measure even though the bug that motivated the rewrite
          above turned out to be Android, not iOS. */
-      position: sticky; top: calc(env(safe-area-inset-top, 0px) + 0.01px); z-index: 50;
+      /* -webkit-sticky first as a defensive fallback, then the unprefixed
+         value overrides it on anything that understands both — belt and
+         suspenders for whatever's rendering this on Kelvin's Android phone,
+         since two structurally different fixes have both failed there for
+         reasons that don't reproduce in any browser available for testing
+         here (2026-08-19). Also dropped backdrop-filter for a fully opaque
+         background — sticky + backdrop-filter has known GPU-compositing
+         bugs on some mobile browsers, and this is cheap to rule out. */
+      position: -webkit-sticky; position: sticky;
+      top: calc(env(safe-area-inset-top, 0px) + 0.01px); z-index: 50;
       margin: 0 -4px 6px; padding: calc(6px + env(safe-area-inset-top, 0px)) 4px 6px; border-radius: 0;
-      background: color-mix(in srgb, var(--bg) 88%, transparent);
-      backdrop-filter: blur(8px);
-      -webkit-backdrop-filter: blur(8px);
+      background: var(--bg);
       border-bottom: 1px solid var(--border);
-    }
-    @supports not (background: color-mix(in srgb, red, blue)) {
-      #navPagesMobile { background: var(--bg); }
     }
     .menu-tools { width: 100%; justify-content: space-between; }
     #navAnalysis { padding: 6px 12px; font-size: 13px; }
@@ -1917,7 +1921,7 @@
 // Bump this on every deploy-worthy change — shown in the header and footer so
 // it's obvious at a glance whether a given device (phone vs desktop) has
 // actually picked up the latest deployed version after a reload.
-const APP_VERSION = "v90";
+const APP_VERSION = "v91";
 
 const STORAGE_KEY = "opto_app_v2";
 

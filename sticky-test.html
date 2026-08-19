@@ -1,0 +1,28 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+<title>Sticky test</title>
+<style>
+  body { margin: 0; font-family: sans-serif; background: #0f1419; color: #e8edf2; }
+  .bar { position: sticky; top: 0; z-index: 50; background: #1a2028; padding: 16px; border-bottom: 2px solid #6ee7b7; font-size: 18px; }
+  .bar.offset { top: 60px; background: #232b35; border-bottom-color: #60a5fa; }
+  .row { padding: 24px 16px; border-bottom: 1px solid #2d3640; }
+</style>
+</head>
+<body>
+<div class="bar">BAR A — top: 0 (should stick to the very top)</div>
+<div class="bar offset">BAR B — top: 60px (should stick just below Bar A)</div>
+<div id="rows"></div>
+<script>
+  const rows = document.getElementById("rows");
+  for (let i = 1; i <= 60; i++) {
+    const d = document.createElement("div");
+    d.className = "row";
+    d.textContent = "Row " + i;
+    rows.appendChild(d);
+  }
+</script>
+</body>
+</html>
