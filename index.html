@@ -1093,7 +1093,7 @@
     </div>
   </div>
   <div class="disclaimer-compact"><strong>⚠ Warning:</strong><br>Confirm Medications / Supplements changes with your Doctor or Pharmacist.</div>
-  <nav class="pages">
+  <nav class="pages" id="navPages">
     <button data-page="main" class="active">Main</button>
     <button data-page="intake">Intake</button>
     <button data-page="plan">Plan</button>
@@ -1882,7 +1882,7 @@
 // Bump this on every deploy-worthy change — shown in the header and footer so
 // it's obvious at a glance whether a given device (phone vs desktop) has
 // actually picked up the latest deployed version after a reload.
-const APP_VERSION = "v87";
+const APP_VERSION = "v88";
 
 const STORAGE_KEY = "opto_app_v2";
 
@@ -7944,6 +7944,7 @@ function captureMobileLayoutSlots() {
     navAddEdit: capture("navAddEdit"),
     timeAdd: capture("timeAdd"),
     timeNow: capture("timeNow"),
+    navPages: capture("navPages"),
   };
 }
 function moveControlsForMobile() {
@@ -7969,6 +7970,17 @@ function moveControlsForMobile() {
     if (dayPill && slots.timeNow && slots.timeNow.el.previousElementSibling !== dayPill) {
       dayPill.parentNode.insertBefore(slots.timeNow.el, dayPill.nextSibling);
     }
+    // #navPages (Main/Intake/Plan/Health/Capture) needs to live OUTSIDE
+    // header.top on mobile, not just get its own position:sticky — a sticky
+    // element can never stick past its own containing block's edges, and
+    // header.top itself is short and non-sticky on mobile (2026-08-19: real-
+    // device testing showed navPages scrolling away with it otherwise, even
+    // though its own CSS was sticky). Moving it to be header.top's sibling
+    // gives it the full page as its sticky range instead.
+    const headerTop = slots.navPages && slots.navPages.parent;
+    if (headerTop && slots.navPages.el.parentNode === headerTop) {
+      headerTop.parentNode.insertBefore(slots.navPages.el, headerTop.nextSibling);
+    }
   } else {
     // #planApplied's home (.plan-row) now also permanently contains
     // .plan-row-right (added 2026-07-28, for true center-column layout) —
@@ -7989,6 +8001,15 @@ function moveControlsForMobile() {
       const s = slots[key];
       if (s && s.el.parentNode !== s.parent) s.parent.appendChild(s.el);
     });
+    // Restore #navPages to its original spot between .disclaimer-compact and
+    // .menu-tools — plain appendChild would land it after .menu-tools
+    // instead (wrong order), same reasoning as planApplied/planRowRight above.
+    const menuTools = slots.navPages && slots.navPages.parent.querySelector(".menu-tools");
+    const np = slots.navPages;
+    if (np && np.el.parentNode !== np.parent) {
+      if (menuTools) np.parent.insertBefore(np.el, menuTools);
+      else np.parent.appendChild(np.el);
+    }
   }
 }
 window.addEventListener("resize", moveControlsForMobile);
@@ -8487,9 +8508,9 @@ migrateVitaminNamePrefix();
 document.getElementById("appVersionTag").textContent = APP_VERSION;
 document.getElementById("appVersionTagFooter").textContent = APP_VERSION;
 applyTheme();
+moveControlsForMobile();
 updateHeaderHeightVar();
 updateNavHeightVar();
-moveControlsForMobile();
 wire();
 renderCustomCategoryButtons();
 checkLicense();
