@@ -1864,7 +1864,7 @@
 // Bump this on every deploy-worthy change — shown in the header and footer so
 // it's obvious at a glance whether a given device (phone vs desktop) has
 // actually picked up the latest deployed version after a reload.
-const APP_VERSION = "v86";
+const APP_VERSION = "v85";
 
 const STORAGE_KEY = "opto_app_v2";
 
@@ -4522,25 +4522,14 @@ function renderIntake() {
       saveState();
       renderIntake();
       // Scroll the selected category's header to the top of the viewport on
-      // EVERY screen size — clicking a category (mobile: stacked below a
-      // long nav list; desktop: the page may already be scrolled from
-      // browsing a long category list) should consistently land right at
-      // that category's own header. Computed explicitly (getBoundingClientRect
-      // + scrollY, minus --header-h) rather than plain scrollIntoView(), and
-      // re-applied after a short delay: mobile browsers collapse/expand the
-      // address bar DURING a scroll, changing the real viewport height after
-      // the fact, which left a single scrollIntoView() call landing short —
-      // several nav items still showing above the target instead of none
-      // (Kelvin, 2026-08-18, reported on real-device v85 testing).
+      // EVERY screen size, not just narrow ones as before — clicking a
+      // category (mobile: stacked below a long nav list; desktop: the page
+      // may already be scrolled from browsing a long category list) should
+      // consistently land you right at that category's own header, not
+      // wherever the page happened to be. #intakeContent's scroll-margin-top
+      // (below) keeps this from landing underneath the sticky app header.
       const contentEl = document.getElementById("intakeContent");
-      const scrollCategoryToTop = () => {
-        if (!contentEl) return;
-        const headerH = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--header-h")) || 70;
-        const targetY = contentEl.getBoundingClientRect().top + window.scrollY - headerH;
-        window.scrollTo({ top: Math.max(0, targetY), behavior: "smooth" });
-      };
-      scrollCategoryToTop();
-      setTimeout(scrollCategoryToTop, 400);
+      if (contentEl && contentEl.scrollIntoView) contentEl.scrollIntoView({ behavior: "smooth", block: "start" });
     };
     if (isCustomCat(t.id)) {
       const row = document.createElement("div");
