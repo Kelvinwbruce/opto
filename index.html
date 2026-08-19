@@ -119,6 +119,7 @@
   .date-stamp { color: var(--text-dim); font-size: 12px; margin-left: 8px; }
 
   nav.pages { display: flex; gap: 2px; background: var(--panel-2); padding: 3px; border-radius: 10px; }
+  #navPagesMobile { display: none; }
   nav.pages button {
     background: transparent; border: none; color: var(--text-dim);
     padding: 8px 16px; border-radius: 8px; font-size: 13px;
@@ -487,17 +488,34 @@
     .time-slider button#timeBack, .time-slider button#timeFwd {
       font-size: 20px; padding: 6px 14px;
     }
-    nav.pages {
-      width: 100%; justify-content: space-between;
-      position: sticky; top: 0; z-index: 50;
-      margin: 0 -4px 6px; padding: 6px 4px; border-radius: 0;
+    /* #navPages (the copy still inside header.top) is hidden on mobile —
+       #navPagesMobile, a true sibling of header.top from first paint, takes
+       over instead. See the HTML comment above <nav id="navPagesMobile">
+       for why this is a static duplicate rather than a JS-relocated node:
+       real-device testing (Kelvin, 2026-08-19, Android/Chrome home-screen
+       icon) showed a JS-relocated sticky nav visibly scrolling away with
+       the page instead of sticking, despite identical CSS that tested fine
+       in a synthetic browser — a statically-placed duplicate removes that
+       whole class of runtime-relocation timing risk. */
+    #navPages { display: none; }
+    #navPagesMobile {
+      display: flex; width: 100%; justify-content: space-between;
+      /* top must NOT be a literal 0 — iOS Safari standalone/home-screen
+         mode (apple-mobile-web-app-capable + viewport-fit=cover, which this
+         app uses for the black-translucent status bar) has a long-documented
+         WebKit bug where position:sticky simply never engages at exactly
+         top:0, while any non-zero offset works fine. Kept as a harmless
+         defensive measure even though the bug that motivated the rewrite
+         above turned out to be Android, not iOS. */
+      position: sticky; top: calc(env(safe-area-inset-top, 0px) + 0.01px); z-index: 50;
+      margin: 0 -4px 6px; padding: calc(6px + env(safe-area-inset-top, 0px)) 4px 6px; border-radius: 0;
       background: color-mix(in srgb, var(--bg) 88%, transparent);
       backdrop-filter: blur(8px);
       -webkit-backdrop-filter: blur(8px);
       border-bottom: 1px solid var(--border);
     }
     @supports not (background: color-mix(in srgb, red, blue)) {
-      nav.pages { background: var(--bg); }
+      #navPagesMobile { background: var(--bg); }
     }
     .menu-tools { width: 100%; justify-content: space-between; }
     #navAnalysis { padding: 6px 12px; font-size: 13px; }
@@ -1110,6 +1128,23 @@
     </div>
   </div>
 </header>
+
+<!-- Mobile-only duplicate of the nav tabs above, kept as a genuine sibling
+     of header.top (not moved here via JS) so its sticky positioning has the
+     whole page as its range instead of being capped by header.top's short
+     box — a real DOM sibling from first paint sidesteps any runtime-
+     relocation timing/reflow risk entirely. Hidden on desktop; #navPages
+     inside header.top is hidden on mobile instead (see CSS). Both share
+     class="pages" so the existing click-wiring and active-tab-highlighting
+     (both use the "nav.pages button" selector) apply to whichever copy is
+     visible with no extra JS needed. -->
+<nav class="pages" id="navPagesMobile">
+  <button data-page="main" class="active">Main</button>
+  <button data-page="intake">Intake</button>
+  <button data-page="plan">Plan</button>
+  <button data-page="health">Health</button>
+  <button data-page="capture">🎤 Capture</button>
+</nav>
 
 <div id="systemWarningBanner" class="system-warning-banner" style="display:none;"></div>
 
@@ -1882,7 +1917,7 @@
 // Bump this on every deploy-worthy change — shown in the header and footer so
 // it's obvious at a glance whether a given device (phone vs desktop) has
 // actually picked up the latest deployed version after a reload.
-const APP_VERSION = "v88";
+const APP_VERSION = "v90";
 
 const STORAGE_KEY = "opto_app_v2";
 
@@ -7904,17 +7939,19 @@ if (window.ResizeObserver) {
 }
 
 // On phone, header.top stops being sticky (see the 800px media query) and
-// nav.pages (Main/Intake/Plan/Health/Capture) becomes its own independently
-// sticky bar instead — the Intake toolbar/table-header sticky stack needs to
-// sit just below THIS on mobile rather than below the full header. Desktop
-// never uses --nav-h (--sticky-base-h stays pointed at --header-h there).
+// #navPagesMobile (Main/Intake/Plan/Health/Capture, a static duplicate of
+// #navPages kept as header.top's sibling — see the HTML comment above it)
+// becomes its own independently sticky bar instead — the Intake toolbar/
+// table-header sticky stack needs to sit just below THIS on mobile rather
+// than below the full header. Desktop never uses --nav-h (--sticky-base-h
+// stays pointed at --header-h there, and #navPagesMobile stays display:none).
 function updateNavHeightVar() {
-  const n = document.querySelector("nav.pages");
+  const n = document.getElementById("navPagesMobile");
   if (n) document.documentElement.style.setProperty("--nav-h", n.getBoundingClientRect().height + "px");
 }
 window.addEventListener("resize", updateNavHeightVar);
 if (window.ResizeObserver) {
-  const navEl = document.querySelector("nav.pages");
+  const navEl = document.getElementById("navPagesMobile");
   if (navEl) new ResizeObserver(updateNavHeightVar).observe(navEl);
 }
 
@@ -7944,7 +7981,6 @@ function captureMobileLayoutSlots() {
     navAddEdit: capture("navAddEdit"),
     timeAdd: capture("timeAdd"),
     timeNow: capture("timeNow"),
-    navPages: capture("navPages"),
   };
 }
 function moveControlsForMobile() {
@@ -7970,17 +8006,6 @@ function moveControlsForMobile() {
     if (dayPill && slots.timeNow && slots.timeNow.el.previousElementSibling !== dayPill) {
       dayPill.parentNode.insertBefore(slots.timeNow.el, dayPill.nextSibling);
     }
-    // #navPages (Main/Intake/Plan/Health/Capture) needs to live OUTSIDE
-    // header.top on mobile, not just get its own position:sticky — a sticky
-    // element can never stick past its own containing block's edges, and
-    // header.top itself is short and non-sticky on mobile (2026-08-19: real-
-    // device testing showed navPages scrolling away with it otherwise, even
-    // though its own CSS was sticky). Moving it to be header.top's sibling
-    // gives it the full page as its sticky range instead.
-    const headerTop = slots.navPages && slots.navPages.parent;
-    if (headerTop && slots.navPages.el.parentNode === headerTop) {
-      headerTop.parentNode.insertBefore(slots.navPages.el, headerTop.nextSibling);
-    }
   } else {
     // #planApplied's home (.plan-row) now also permanently contains
     // .plan-row-right (added 2026-07-28, for true center-column layout) —
@@ -8001,15 +8026,6 @@ function moveControlsForMobile() {
       const s = slots[key];
       if (s && s.el.parentNode !== s.parent) s.parent.appendChild(s.el);
     });
-    // Restore #navPages to its original spot between .disclaimer-compact and
-    // .menu-tools — plain appendChild would land it after .menu-tools
-    // instead (wrong order), same reasoning as planApplied/planRowRight above.
-    const menuTools = slots.navPages && slots.navPages.parent.querySelector(".menu-tools");
-    const np = slots.navPages;
-    if (np && np.el.parentNode !== np.parent) {
-      if (menuTools) np.parent.insertBefore(np.el, menuTools);
-      else np.parent.appendChild(np.el);
-    }
   }
 }
 window.addEventListener("resize", moveControlsForMobile);
