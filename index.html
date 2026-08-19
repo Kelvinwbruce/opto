@@ -491,36 +491,33 @@
     /* #navPages (the copy still inside header.top) is hidden on mobile —
        #navPagesMobile, a true sibling of header.top from first paint, takes
        over instead. See the HTML comment above <nav id="navPagesMobile">
-       for why this is a static duplicate rather than a JS-relocated node:
-       real-device testing (Kelvin, 2026-08-19, Android/Chrome home-screen
-       icon) showed a JS-relocated sticky nav visibly scrolling away with
-       the page instead of sticking, despite identical CSS that tested fine
-       in a synthetic browser — a statically-placed duplicate removes that
-       whole class of runtime-relocation timing risk. */
+       for why this is a static duplicate rather than a JS-relocated node.
+       It uses position:fixed, not sticky — three different sticky-based
+       attempts (JS-relocated, statically-placed, with/without backdrop-
+       filter and vendor prefixes) all failed identically on Kelvin's real
+       Android/Chrome device (2026-08-19) despite every one of them working
+       correctly in every browser available for testing here, including a
+       bare-minimum standalone test page confirming sticky itself works
+       fine on that device — meaning the failure is some interaction with
+       this app's specific layout that resisted every diagnosis attempted.
+       position:fixed sidesteps the whole containing-block/scroll-container
+       mechanism that sticky depends on, at the cost of needing a manual
+       top-padding spacer (below, on .app) since fixed elements don't
+       reserve their own layout space the way sticky ones do. */
     #navPages { display: none; }
     #navPagesMobile {
-      display: flex; width: 100%; justify-content: space-between;
-      /* top must NOT be a literal 0 — iOS Safari standalone/home-screen
-         mode (apple-mobile-web-app-capable + viewport-fit=cover, which this
-         app uses for the black-translucent status bar) has a long-documented
-         WebKit bug where position:sticky simply never engages at exactly
-         top:0, while any non-zero offset works fine. Kept as a harmless
-         defensive measure even though the bug that motivated the rewrite
-         above turned out to be Android, not iOS. */
-      /* -webkit-sticky first as a defensive fallback, then the unprefixed
-         value overrides it on anything that understands both — belt and
-         suspenders for whatever's rendering this on Kelvin's Android phone,
-         since two structurally different fixes have both failed there for
-         reasons that don't reproduce in any browser available for testing
-         here (2026-08-19). Also dropped backdrop-filter for a fully opaque
-         background — sticky + backdrop-filter has known GPU-compositing
-         bugs on some mobile browsers, and this is cheap to rule out. */
-      position: -webkit-sticky; position: sticky;
-      top: calc(env(safe-area-inset-top, 0px) + 0.01px); z-index: 50;
-      margin: 0 -4px 6px; padding: calc(6px + env(safe-area-inset-top, 0px)) 4px 6px; border-radius: 0;
+      display: flex; width: 100%; justify-content: space-between; box-sizing: border-box;
+      position: fixed; top: 0; left: 0; right: 0; z-index: 50;
+      padding: calc(6px + env(safe-area-inset-top, 0px)) 4px 6px; border-radius: 0;
       background: var(--bg);
       border-bottom: 1px solid var(--border);
     }
+    /* Spacer for #navPagesMobile now that it's position:fixed and no longer
+       reserves its own space in normal flow — every page needs this, not
+       just Intake, since the fixed bar covers whatever's underneath it on
+       every page equally. --nav-h already gets measured/kept in sync via
+       ResizeObserver (see updateNavHeightVar in the JS). */
+    .app { padding-top: calc(14px + var(--nav-h, 48px)); }
     .menu-tools { width: 100%; justify-content: space-between; }
     #navAnalysis { padding: 6px 12px; font-size: 13px; }
     /* #navAddEdit/#timeAdd relocate here (moveControlsForMobile()) — 4th
@@ -1921,7 +1918,7 @@
 // Bump this on every deploy-worthy change — shown in the header and footer so
 // it's obvious at a glance whether a given device (phone vs desktop) has
 // actually picked up the latest deployed version after a reload.
-const APP_VERSION = "v92";
+const APP_VERSION = "v93";
 
 const STORAGE_KEY = "opto_app_v2";
 
