@@ -1945,7 +1945,7 @@
 // Bump this on every deploy-worthy change — shown in the header and footer so
 // it's obvious at a glance whether a given device (phone vs desktop) has
 // actually picked up the latest deployed version after a reload.
-const APP_VERSION = "v98";
+const APP_VERSION = "v99";
 
 const STORAGE_KEY = "opto_app_v2";
 
@@ -5230,7 +5230,13 @@ function initSpeechRecognition() {
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   const rec = new SR();
   rec.lang = "en-US";
-  rec.continuous = false;
+  // true (not false) so a mid-note pause ("Note - Gloria - Lowes $28.42...
+  // [thinking] ...and paint") doesn't end the recording after just the first
+  // segment — onresult's accumulation loop below already handles multiple
+  // isFinal segments arriving over one session, this just lets more than one
+  // actually arrive. Now stops only when the mic button is tapped again
+  // (see captureMicBtn's toggle wiring), not on the first pause.
+  rec.continuous = true;
   rec.interimResults = true;
   return rec;
 }
@@ -5246,7 +5252,7 @@ function startCaptureRecording() {
   const transcript = document.getElementById("captureTranscript");
   const text = document.getElementById("transcriptText");
   btn.classList.add("recording");
-  status.textContent = "Listening…";
+  status.textContent = "Listening… tap mic again when you're done";
   transcript.style.display = "none";
   speechFinal = "";
 
@@ -8421,7 +8427,13 @@ function wire() {
   document.getElementById("analysisClose").onclick = () => document.getElementById("analysisModal").classList.remove("open");
   // Capture page wiring
   const micBtn = document.getElementById("captureMicBtn");
-  if (micBtn) micBtn.onclick = startCaptureRecording;
+  // Toggle, not always-start — now that recognition runs continuous (see
+  // initSpeechRecognition), it no longer stops itself at the first pause,
+  // so tapping the mic again while recording is how you tell it you're done.
+  if (micBtn) micBtn.onclick = () => {
+    if (micBtn.classList.contains("recording")) stopCaptureRecording();
+    else startCaptureRecording();
+  };
   const trSave = document.getElementById("transcriptSave");
   if (trSave) trSave.onclick = saveCaptureTranscript;
   const trAddIntake = document.getElementById("transcriptAddIntake");
