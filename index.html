@@ -1568,18 +1568,14 @@
 <div class="modal-bg" id="noteModal">
   <div class="modal" style="max-width: 480px;">
     <h3 id="noteModalTitle">Note</h3>
-    <div id="notePastHint" style="display:none; font-size: 12px; padding: 8px 10px; background: var(--panel-2); border-radius: 6px; border-left: 3px solid var(--accent-2); margin-bottom: 8px;"></div>
+    <div id="notePastHint" style="display:none; align-items: center; justify-content: space-between; gap: 10px; font-size: 12px; padding: 8px 10px; background: var(--panel-2); border-radius: 6px; border-left: 3px solid var(--accent-2); margin-bottom: 8px;"></div>
     <div class="modal-row">
       <label>What's going on? (edit if misheard)</label>
       <textarea id="noteText" rows="3" style="width: 100%; padding: 6px 10px; font-family: inherit; background: var(--panel); color: var(--text); border: 1px solid var(--border); border-radius: 6px;"></textarea>
     </div>
     <div class="modal-row" style="display: grid; grid-template-columns: 1fr 140px; gap: 8px;">
       <div><label>Category</label>
-        <select id="noteCategory">
-          <option value="Health">Health</option>
-          <option value="Legal">Legal</option>
-          <option value="General">General</option>
-        </select>
+        <select id="noteCategory"></select>
       </div>
       <div id="noteSeverityRow"><label>Severity <span style="color: var(--text-dim); font-weight: 400;">(optional)</span></label>
         <input id="noteSeverity" type="range" min="0" max="10" step="1" style="width:100%;" />
@@ -1945,7 +1941,7 @@
 // Bump this on every deploy-worthy change — shown in the header and footer so
 // it's obvious at a glance whether a given device (phone vs desktop) has
 // actually picked up the latest deployed version after a reload.
-const APP_VERSION = "v99";
+const APP_VERSION = "v102";
 
 const STORAGE_KEY = "opto_app_v2";
 
@@ -5762,6 +5758,43 @@ function findRelatedNotes(text) {
   return notes.filter(n => (n.text || "").toLowerCase().includes(needle));
 }
 
+// Built-in Note categories, in dropdown order — custom ones (state.
+// noteCategories, user-added via the "+ Add Category" option) always follow
+// these, with "+ Add Category" itself pinned last regardless of how many
+// custom ones exist.
+const NOTE_BUILTIN_CATEGORIES = ["Health", "Legal", "Jobs", "General"];
+function renderNoteCategoryOptions(selectEl) {
+  const sel = selectEl || document.getElementById("noteCategory");
+  if (!sel) return;
+  const custom = state.noteCategories || [];
+  const all = NOTE_BUILTIN_CATEGORIES.concat(custom);
+  sel.innerHTML = all.map(c => `<option value="${escapeAttr(c)}">${escapeHtml(c)}</option>`).join("") +
+    `<option value="__add__">+ Add Category</option>`;
+}
+function handleNoteCategoryChange() {
+  const sel = document.getElementById("noteCategory");
+  if (sel.value !== "__add__") { sel.dataset.prevValue = sel.value; return; }
+  const name = (prompt("New note category name:") || "").trim();
+  const prevValue = sel.dataset.prevValue || "General";
+  if (!name) { sel.value = prevValue; return; }
+  const all = NOTE_BUILTIN_CATEGORIES.concat(state.noteCategories || []);
+  const existing = all.find(c => c.toLowerCase() === name.toLowerCase());
+  if (existing) {
+    // Already exists (built-in or previously added) — just select it rather
+    // than creating a case-variant duplicate.
+    renderNoteCategoryOptions(sel);
+    sel.value = existing;
+    sel.dataset.prevValue = existing;
+    return;
+  }
+  if (!state.noteCategories) state.noteCategories = [];
+  state.noteCategories.push(name);
+  saveState();
+  renderNoteCategoryOptions(sel);
+  sel.value = name;
+  sel.dataset.prevValue = name;
+}
+
 // Opens the Note entry modal. opts.text/category/severity are pre-fill
 // suggestions (typically from fastParseNote) — always editable, never final.
 function openNoteModal(opts) {
@@ -5769,7 +5802,9 @@ function openNoteModal(opts) {
   activeNote = {};
   const text = opts.text || "";
   document.getElementById("noteText").value = text;
+  renderNoteCategoryOptions();
   document.getElementById("noteCategory").value = opts.category || "General";
+  document.getElementById("noteCategory").dataset.prevValue = opts.category || "General";
   updateNoteSeverityVisibility();
   const sev = document.getElementById("noteSeverity");
   const sevVal = document.getElementById("noteSeverityVal");
@@ -5783,9 +5818,9 @@ function openNoteModal(opts) {
   if (hint) {
     const past = text ? findRelatedNotes(text) : [];
     if (past.length > 0) {
-      hint.style.display = "";
-      hint.innerHTML = `Found ${past.length} past note${past.length === 1 ? "" : "s"} related to this. ` +
-        `<a href="#" id="notePastHintLink" style="color:var(--accent-2);">View them</a>`;
+      hint.style.display = "flex";
+      hint.innerHTML = `<span>Found ${past.length} past note${past.length === 1 ? "" : "s"} related to this.</span>` +
+        `<button type="button" id="notePastHintLink" class="primary" style="flex-shrink:0; padding:6px 14px; font-size:12px;">View Notes</button>`;
       const link = document.getElementById("notePastHintLink");
       if (link) link.onclick = (e) => {
         e.preventDefault();
@@ -5870,8 +5905,24 @@ function tryNoteVoiceCommand(text, opts) {
   const logMatch = cleaned.match(/^(?:log|add)?\s*notes?\s*:?\s*(.*)$/i);
   if (logMatch) {
     const body = (logMatch[1] || "").trim();
-    const parsed = fastParseNote(body);
-    openNoteModal({ text: body, category: parsed.category, severity: parsed.severity });
+    // Check for a known job name BEFORE the generic Health/Legal keyword
+    // guess — a note that starts with a recognized (or close-enough-to-
+    // recognized) job name is a Jobs note regardless of what words follow,
+    // so this takes priority over fastParseNote's category guess.
+    const words = body.split(/\s+/);
+    const jobMatch = typeof findJobNameMatch === "function" ? findJobNameMatch(words[0]) : null;
+    let finalBody = body, category, severity;
+    if (jobMatch) {
+      words[0] = jobMatch;
+      finalBody = words.join(" ");
+      category = "Jobs";
+      severity = null;
+    } else {
+      const parsed = fastParseNote(body);
+      category = parsed.category;
+      severity = parsed.severity;
+    }
+    openNoteModal({ text: finalBody, category, severity });
     if (opts.fromVoice) speak(body ? "Note ready to save" : "Listening for your note");
     return true;
   }
@@ -5939,7 +5990,12 @@ function renderNoteLogResults(query, containerId, limit) {
     return;
   }
   list.innerHTML = filtered.map(n => {
-    const ctx = getNoteContext(n);
+    // Recent meals/test readings around the note's time is useful context for
+    // a Health note (correlating a symptom with what was just eaten/tested)
+    // but pure clutter on a General/Legal/Jobs note — a work note like
+    // "Gloria Lowe's $52.75 and paint" has no business showing a glucose
+    // reading underneath it.
+    const ctx = n.category === "Health" ? getNoteContext(n) : { meals: [], tests: [] };
     const ctxParts = [];
     if (ctx.meals.length) ctxParts.push("🍽️ " + ctx.meals.map(m => escapeHtml(m.name) + " (" + m.time + ")").join(", "));
     if (ctx.tests.length) ctxParts.push("🩺 " + ctx.tests.map(t => escapeHtml(t.name) + ": " + escapeHtml(t.value) + (t.units ? " " + escapeHtml(t.units) : "") + " (" + t.time + ")").join(", "));
@@ -6112,6 +6168,44 @@ function levenshteinDistance(a, b) {
     }
   }
   return matrix[b.length][a.length];
+}
+
+// Lets a job/client name (e.g. "Dilcia") get recognized going forward after
+// being corrected+categorized as Jobs just once — no separate "add job name"
+// list to manage. Distinct first-words already used under the Jobs category
+// are the "known" set; a new note's first word gets fuzzy-matched against
+// them and, on a close-enough hit, both corrected to that spelling and
+// auto-categorized as Jobs (still fully editable before Save, same as the
+// existing Health/Legal keyword guess this runs alongside).
+function knownJobNames() {
+  const names = new Set();
+  for (const n of (state.intake.notes || [])) {
+    if (n.category !== "Jobs") continue;
+    const firstWord = (n.text || "").trim().split(/\s+/)[0];
+    if (firstWord) names.add(firstWord);
+  }
+  return [...names];
+}
+function findJobNameMatch(word) {
+  if (!word || word.length < 3) return null;
+  const lower = word.toLowerCase();
+  let best = null;
+  let bestDist = Infinity;
+  for (const name of knownJobNames()) {
+    const nameLower = name.toLowerCase();
+    if (nameLower === lower) return name;
+    // More generous than the catalog-item fuzzy tier (25%, capped at 3) —
+    // a misheard proper name (Kelvin, 2026-09-11: "Dilcia" transcribed as
+    // "Delsea" or "dilsia") can drift further from the original spelling
+    // than a misheard catalog word typically does.
+    const maxAllowed = Math.max(2, Math.ceil(nameLower.length * 0.4));
+    const dist = levenshteinDistance(lower, nameLower);
+    if (dist <= maxAllowed && dist < bestDist) {
+      best = name;
+      bestDist = dist;
+    }
+  }
+  return best;
 }
 
 function matchOneCaptureItem(text) {
@@ -8381,7 +8475,10 @@ function wire() {
     activeNote = null;
   };
   document.getElementById("noteSave").onclick = saveNoteEntry;
-  document.getElementById("noteCategory").addEventListener("change", updateNoteSeverityVisibility);
+  document.getElementById("noteCategory").addEventListener("change", () => {
+    handleNoteCategoryChange();
+    updateNoteSeverityVisibility();
+  });
   document.getElementById("noteLogClose").onclick = () => document.getElementById("noteLogModal").classList.remove("open");
   document.getElementById("navNotes").addEventListener("click", () => openNoteLog(""));
   document.querySelectorAll(".note-log-quick-filter").forEach(btn => {
