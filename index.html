@@ -1945,7 +1945,7 @@
 // Bump this on every deploy-worthy change — shown in the header and footer so
 // it's obvious at a glance whether a given device (phone vs desktop) has
 // actually picked up the latest deployed version after a reload.
-const APP_VERSION = "v96";
+const APP_VERSION = "v98";
 
 const STORAGE_KEY = "opto_app_v2";
 
@@ -5611,6 +5611,7 @@ function findDirectItemMatch(text) {
   const catalogs = voiceMatchCatalogs();
   const highMatches = [];
   const seen = new Set();
+  const escRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const matchesAgainst = (probe) => {
     for (const {cat, items, amtField} of catalogs) {
       for (const item of items) {
@@ -5622,7 +5623,17 @@ function findDirectItemMatch(text) {
         // as "che") can falsely "match" any longer word that happens to
         // contain it (e.g. "cheeseburger"), silently logging the wrong item
         // instead of asking to add a new one.
-        const substringOk = itemLower.length >= 4 && probe.length >= 4 && (probe.includes(itemLower) || itemLower.includes(probe));
+        // Word-boundary aware (\b...\b), not a plain .includes() — "Keto" is
+        // a literal text-substring of "Ketone" with no space between them
+        // ("ketone" starts with "keto"), so a loose substring check falsely
+        // flagged every "Ketone" reading as ambiguous with the unrelated
+        // "Keto" Diet item, even though "keto" never actually occurs as its
+        // own word there. \b requires a real word boundary on both sides —
+        // it still correctly matches genuine whole-word cases like "pizza"
+        // inside "Pizza L", just not "keto" as a mere prefix of "ketone".
+        const substringOk = itemLower.length >= 4 && probe.length >= 4 &&
+          (new RegExp("\\b" + escRe(itemLower) + "\\b").test(probe) ||
+           new RegExp("\\b" + escRe(probe) + "\\b").test(itemLower));
         if (probe === itemLower || substringOk) {
           const key = cat + "|" + item.name;
           if (seen.has(key)) continue;
@@ -6749,7 +6760,7 @@ function readReadingsFromForm() {
 function renderReadingsInputs(readings, bestValue) {
   const box = document.getElementById("trReadings");
   const padded = readings.slice();
-  while (padded.length < 2) padded.push({ value:"", time: nowHHMM() });
+  while (padded.length < 2) padded.push({ value:"", time: (activeTest && activeTest.time) || nowHHMM() });
   const tname = activeTest ? activeTest.name : "";
   const best = bestValue || (padded.filter(r=>r.value).length ? pickBestReading(tname, padded.filter(r=>r.value)) : null);
   box.innerHTML = padded.map((r, idx) => {
@@ -6846,7 +6857,7 @@ function openTestResultModal(item, dateStr) {
   document.getElementById("trUnits").value = (existing && existing.units) || TEST_UNITS[item.name] || "";
   document.getElementById("trNotes").value = (existing && existing.notes) || "";
 
-  const readings = (existing && existing.readings) ? existing.readings.slice() : [{ value:"", time: nowHHMM() }];
+  const readings = (existing && existing.readings) ? existing.readings.slice() : [{ value:"", time: activeTest.time }];
   // Pre-fill from a voice reading spoken alongside the item name ("Glucose
   // 105") — only when there's no existing saved reading for this slot to
   // overwrite, and always still editable before Save.
@@ -8390,6 +8401,17 @@ function wire() {
   document.getElementById("trCancel").onclick = () => document.getElementById("testResultModal").classList.remove("open");
   document.getElementById("trDayBack").onclick = () => trShiftDay(-1);
   document.getElementById("trDayFwd").onclick = () => trShiftDay(1);
+  // Keep each reading row's own time in step with the slot time as long as
+  // it still matches the OLD slot time — once a reading has its own
+  // deliberately different time (multiple consecutive readings a few
+  // minutes apart), further slot-time changes leave it alone.
+  document.getElementById("trSlotTime").addEventListener("change", (e) => {
+    const oldTime = activeTest.time;
+    activeTest.time = e.target.value;
+    document.querySelectorAll("#trReadings .tr-rtime").forEach(inp => {
+      if (inp.value === oldTime) inp.value = activeTest.time;
+    });
+  });
   document.getElementById("addSave").onclick = saveAddModal;
   document.getElementById("addCancel").onclick = () => document.getElementById("addItemModal").classList.remove("open");
   document.getElementById("editSave").onclick = saveEditModal;
