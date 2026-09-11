@@ -249,6 +249,7 @@
     padding: 2px 4px; border-radius: 8px;
     flex-shrink: 0;
   }
+  .tr-day-time-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
   .day-slider-inline button {
     background: transparent; border: none; color: var(--text);
     padding: 6px 10px; font-size: 16px; cursor: pointer; font-weight: 700;
@@ -1876,16 +1877,26 @@
       <input id="trName" type="text" readonly style="background: var(--panel-2);" />
     </div>
     <!-- Only shown when reached via "+ Add" (backfill) for a brand-new Test
-         log entry — matches the same Day control every other category gets
-         in that flow (anDayRow). Other paths into this modal (Main page's
-         own today-only add, voice capture, an existing plan slot) are all
-         inherently today/now already and don't need it. -->
-    <div class="modal-row" id="trDayRow" style="display:none;">
-      <label>Day</label>
-      <div class="day-slider-inline">
-        <button type="button" id="trDayBack" title="Previous day">−</button>
-        <span id="trDayLabel" style="min-width: 90px; text-align: center; display: inline-block;">Today</span>
-        <button type="button" id="trDayFwd" title="Next day">+</button>
+         log entry — matches the same Day+Time controls every other category
+         gets in that flow (anDayRow/anTime). Other paths into this modal
+         (Main page's own today-only add, voice capture, an existing plan
+         slot) are all inherently today/now already and don't need it. This
+         is the actual slot time the entry files under (state.testResults/
+         state.logs) — separate from each individual reading's own time
+         field further down, which is just for logging up to 3 consecutive
+         readings a few minutes apart within this one slot. -->
+    <div class="modal-row tr-day-time-grid" id="trDayRow" style="display:none;">
+      <div>
+        <label>Day</label>
+        <div class="day-slider-inline">
+          <button type="button" id="trDayBack" title="Previous day">−</button>
+          <span id="trDayLabel" style="min-width: 90px; text-align: center; display: inline-block;">Today</span>
+          <button type="button" id="trDayFwd" title="Next day">+</button>
+        </div>
+      </div>
+      <div>
+        <label>Time</label>
+        <input id="trSlotTime" type="time" />
       </div>
     </div>
     <div class="modal-row">
@@ -1934,7 +1945,7 @@
 // Bump this on every deploy-worthy change — shown in the header and footer so
 // it's obvious at a glance whether a given device (phone vs desktop) has
 // actually picked up the latest deployed version after a reload.
-const APP_VERSION = "v95";
+const APP_VERSION = "v96";
 
 const STORAGE_KEY = "opto_app_v2";
 
@@ -6807,6 +6818,8 @@ function trUpdateDayRow() {
 function openTestResultModal(item, dateStr) {
   activeTest = { date: dateStr || todayDate(), name: item.name, time: item.time, isLog: !!item._log, logId: item._logId, captureMode: !!item._captureMode, allowDateChange: !!item._allowDateTime };
   trUpdateDayRow();
+  const slotTimeInput = document.getElementById("trSlotTime");
+  if (slotTimeInput) slotTimeInput.value = activeTest.time;
   // Show "Delete pill" only when this is a log entry (today-only) — not a recurring plan item
   const dp = document.getElementById("trDeletePill");
   if (dp) dp.style.display = activeTest.isLog ? "" : "none";
@@ -6890,6 +6903,14 @@ function saveTestResult() {
   if (readings.length === 0) { alert("Enter at least one reading value (or use Mark Missed / Cancel)."); return; }
   const units = document.getElementById("trUnits").value.trim();
   const notes = document.getElementById("trNotes").value.trim();
+  // The slot time (where this files under state.testResults/state.logs) is
+  // only user-editable via #trSlotTime in the backfill flow — everywhere
+  // else activeTest.time is already correct (today/now, or an existing
+  // plan slot's own fixed time) and this input doesn't exist/isn't shown.
+  if (activeTest.allowDateChange) {
+    const slotTimeInput = document.getElementById("trSlotTime");
+    if (slotTimeInput && slotTimeInput.value) activeTest.time = slotTimeInput.value;
+  }
 
   if (activeTest.captureMode) {
     // Capture mode: save locally on this device (log + test result + status) so it appears
@@ -6970,13 +6991,13 @@ function saveTestResult() {
   state.status[activeTest.date][statusKey(item)] = "complete";
 
   // The log entry itself was created up front (in anPickItem, before this
-  // modal even opened) with whatever date was current at that moment — if
-  // the user then backdated via the Day row above, that log entry's date
-  // would otherwise go stale relative to where the reading actually landed
-  // in state.testResults/state.status just above.
+  // modal even opened) with whatever date/time was current at that moment —
+  // if the user then backdated via the Day/Time controls above, that log
+  // entry would otherwise go stale relative to where the reading actually
+  // landed in state.testResults/state.status just above.
   if (activeTest.isLog && activeTest.logId) {
     const logEntry = (state.logs || []).find(l => l.id === activeTest.logId);
-    if (logEntry) logEntry.date = activeTest.date;
+    if (logEntry) { logEntry.date = activeTest.date; logEntry.time = activeTest.time; }
   }
 
   saveState();
