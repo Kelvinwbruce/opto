@@ -1941,7 +1941,7 @@
 // Bump this on every deploy-worthy change — shown in the header and footer so
 // it's obvious at a glance whether a given device (phone vs desktop) has
 // actually picked up the latest deployed version after a reload.
-const APP_VERSION = "v105";
+const APP_VERSION = "v107";
 
 const STORAGE_KEY = "opto_app_v2";
 
@@ -3136,6 +3136,22 @@ async function syncFromPhoneNow(silent) {
     }
     if (logsAdded > 0) addedParts.push(logsAdded + " log" + (logsAdded===1?"":"s"));
     added += logsAdded;
+
+    // Notes — additive by id, same pattern as logs/captures. Was missing
+    // entirely (Kelvin, 2026-09-12: "Desktop has a Notes button but no
+    // notes show up") — every other synced data type had this, notes were
+    // simply left out.
+    const incomingNotes = Array.isArray(data.intake && data.intake.notes) ? data.intake.notes : [];
+    if (!state.intake.notes) state.intake.notes = [];
+    const existingNoteIds = new Set(state.intake.notes.map(n => n.id));
+    let notesAdded = 0;
+    for (const note of incomingNotes) {
+      if (existingNoteIds.has(note.id)) continue;
+      state.intake.notes.push({ ...note });
+      notesAdded++;
+    }
+    if (notesAdded > 0) addedParts.push(notesAdded + " note" + (notesAdded===1?"":"s"));
+    added += notesAdded;
 
     // Built-in categories' catalog items — additive by name, same safe pattern
     // as the custom-category items below. A built-in category (Food, Drink,
@@ -5297,18 +5313,27 @@ function startCaptureRecording() {
     console.warn("SpeechRecognition error:", e);
   };
   speechRecognition.onend = () => {
+    // A standalone "Stop" segment (the whole segment, not just the word
+    // appearing somewhere inside a longer sentence — so a real note like
+    // "tell Gloria to stop leaving the gate open" is never mistaken for the
+    // stop command) ends the recording exactly like tapping the mic again,
+    // without saving the word "Stop" itself into the note.
+    if (speechSegmentFinal.trim().toLowerCase() === "stop") {
+      speechSegmentFinal = "";
+      speechUserStopped = true;
+    }
     // Fold this segment into the running total, then decide whether to keep
     // going or process immediately.
     if (speechSegmentFinal) {
       speechFinal = speechFinal ? speechFinal + " " + speechSegmentFinal : speechSegmentFinal;
       speechSegmentFinal = "";
     }
-    // Only a Note-in-progress waits for a manual mic tap to finish — every
-    // other voice interaction (a quick catalog item like "Glucose 95") keeps
-    // processing immediately after the first natural pause, exactly like
-    // before continuous chaining existed. Requiring an extra tap on every
-    // single voice command, not just notes, would be a real regression for
-    // the far more common quick-command case.
+    // Only a Note-in-progress waits for a manual mic tap (or spoken "Stop")
+    // to finish — every other voice interaction (a quick catalog item like
+    // "Glucose 95") keeps processing immediately after the first natural
+    // pause, exactly like before continuous chaining existed. Requiring an
+    // extra tap/word on every single voice command, not just notes, would
+    // be a real regression for the far more common quick-command case.
     const looksLikeNote = /^(?:log|add)?\s*notes?\b/i.test(speechFinal.trim());
     if (!speechUserStopped && looksLikeNote) {
       try { speechRecognition.start(); return; }
@@ -5574,7 +5599,13 @@ function extractReadingFromVoiceText(text, itemName) {
   const lower = text.toLowerCase();
   const nameLower = itemName.toLowerCase();
   const idx = lower.indexOf(nameLower);
-  const after = idx === -1 ? lower : lower.slice(idx + nameLower.length);
+  let after = idx === -1 ? lower : lower.slice(idx + nameLower.length);
+  // "Dot" gets auto-converted to a literal "." by the phone's own speech
+  // engine, but "point"/"period" don't (Kelvin, 2026-09-12: "Ketone point 3"
+  // came through as the literal word "point", not a decimal, so it silently
+  // fell through to just "3") — normalize them the same way here instead of
+  // relying on the engine to do it.
+  after = after.replace(/\s*\b(?:point|period|dot)\b\s*/gi, ".");
   const bp = after.match(/(\d+)\s*(?:\/|over)\s*(\d+)/);
   if (bp) return bp[1] + "/" + bp[2];
   // \d* (not \d+) before the optional decimal point — readings like Ketone's
@@ -5891,23 +5922,11 @@ function saveNoteEntry() {
   const id = "note_" + Date.now() + "_" + Math.floor(Math.random() * 1000);
   state.intake.notes.push({ id, date, time, text, category, severity });
 
-  // Companion Main-timeline pill — a plain state.logs entry with cat:"Notes",
-  // same pattern the existing "Xcheck" row already uses (see pushSyncTestMarker()),
-  // so it rides the Main timeline's existing generic row/pill rendering for
-  // free rather than needing special layout code. _log:true shows it as an
-  // already-confirmed (blue) pill, matching every other real-time capture.
-  state.logs = state.logs || [];
-  state.logs.push({
-    id: "l_" + Date.now(),
-    date, time,
-    cat: "Notes",
-    name: NOTE_CATEGORY_PILL_CODE[category] || "N-G",
-    detail: text,
-    _log: true,
-    _addedAt: Date.now(),
-    _noteId: id
-  });
-
+  // No more companion Main-timeline pill (Kelvin, 2026-09-12) — it only ever
+  // showed a cryptic code like "N-G", needing a tap to find out what it even
+  // was. The "Notes today"/"Notes <name>" voice commands (see
+  // tryNoteVoiceCommand) replace the "quick glance" need this was for,
+  // without cluttering the timeline.
   saveState();
   document.getElementById("noteModal").classList.remove("open");
   activeNote = null;
@@ -5929,18 +5948,30 @@ function tryNoteVoiceCommand(text, opts) {
   opts = opts || {};
   const cleaned = text.trim().replace(/[.,!?]+$/g, "");
 
-  const searchMatch = cleaned.match(/^(?:find|search)\s+notes?\s*:?\s*(.*)$/i) ||
-                       cleaned.match(/^view\s+log\s+for\s+(.+)$/i);
-  if (searchMatch) {
-    const query = (searchMatch[1] || "").trim();
+  // Deliberate split (Kelvin, 2026-09-12): "Notes" (plural) always means
+  // VIEW, "Note" (singular, checked below) always means CAPTURE — no other
+  // wording to remember. "find notes .../search notes .../view log for ..."
+  // still work too, as more explicit synonyms of the same thing.
+  const viewMatch = cleaned.match(/^notes\b\s*:?\s*(.*)$/i) ||
+                     cleaned.match(/^(?:find|search)\s+notes?\s*:?\s*(.*)$/i) ||
+                     cleaned.match(/^view\s+log\s+for\s+(.+)$/i);
+  if (viewMatch) {
+    const query = (viewMatch[1] || "").trim();
     if (typeof openNoteLog === "function") {
-      openNoteLog(query);
-      if (opts.fromVoice) speak(query ? "Showing notes about " + query : "Showing all notes");
+      if (/^today$/i.test(query)) {
+        openNoteLog("", "today");
+        if (opts.fromVoice) speak("Showing today's notes");
+      } else {
+        openNoteLog(query);
+        if (opts.fromVoice) speak(query ? "Showing notes about " + query : "Showing all notes");
+      }
     }
     return true;
   }
 
-  const logMatch = cleaned.match(/^(?:log|add)?\s*notes?\s*:?\s*(.*)$/i);
+  // "note\b" (not "notes?") — the \b blocks this from also matching "notes",
+  // which the viewMatch check above already claimed exclusively.
+  const logMatch = cleaned.match(/^(?:log|add)?\s*note\b\s*:?\s*(.*)$/i);
   if (logMatch) {
     const body = (logMatch[1] || "").trim();
     // Check for a known job name BEFORE the generic Health/Legal keyword
@@ -6026,13 +6057,14 @@ function updateNoteLogFilterButtons() {
   });
 }
 
-function openNoteLog(query) {
+function openNoteLog(query, dateRange) {
   const modal = document.getElementById("noteLogModal");
   if (!modal) return;
-  // Reset to Most Recent each time this opens fresh — a filter left over
-  // from a previous visit (e.g. "Today") could otherwise hide results when
-  // arriving here from a timeline-pill tap or voice search for older notes.
-  noteLogDateRange = "";
+  // Reset to Most Recent each time this opens fresh, unless a specific range
+  // was requested (e.g. the "Notes today" voice command) — a filter left
+  // over from a previous visit could otherwise hide results when arriving
+  // here from a timeline-pill tap or voice search for older notes.
+  noteLogDateRange = dateRange || "";
   updateNoteLogFilterButtons();
   document.getElementById("noteLogQuery").value = query || "";
   renderNoteLogResults(query || "", "noteLogResults");
