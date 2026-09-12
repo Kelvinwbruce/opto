@@ -1941,7 +1941,7 @@
 // Bump this on every deploy-worthy change — shown in the header and footer so
 // it's obvious at a glance whether a given device (phone vs desktop) has
 // actually picked up the latest deployed version after a reload.
-const APP_VERSION = "v104";
+const APP_VERSION = "v105";
 
 const STORAGE_KEY = "opto_app_v2";
 
@@ -5216,6 +5216,13 @@ function deleteEditModal() {
 // ============================================================================
 let speechRecognition = null;
 let speechFinal = "";
+// This session's own segment, separate from speechFinal (the running total
+// across all chained segments — see below).
+let speechSegmentFinal = "";
+// True once the mic button itself has been tapped to stop — distinguishes a
+// deliberate stop from the recognition engine ending a single segment on
+// its own (which happens after nearly every pause, even a short one).
+let speechUserStopped = false;
 
 function captureSpeechSupported() {
   return !!(window.SpeechRecognition || window.webkitSpeechRecognition);
@@ -5226,13 +5233,17 @@ function initSpeechRecognition() {
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   const rec = new SR();
   rec.lang = "en-US";
-  // true (not false) so a mid-note pause ("Note - Gloria - Lowes $28.42...
-  // [thinking] ...and paint") doesn't end the recording after just the first
-  // segment — onresult's accumulation loop below already handles multiple
-  // isFinal segments arriving over one session, this just lets more than one
-  // actually arrive. Now stops only when the mic button is tapped again
-  // (see captureMicBtn's toggle wiring), not on the first pause.
-  rec.continuous = true;
+  // continuous:true (tried 2026-09-11/12) turned out to behave differently
+  // across onresult events in ways that varied between attempts and never
+  // matched any single consistent theory — sometimes re-reporting an
+  // already-final segment, sometimes restating the whole phrase so far
+  // under a new index — genuinely unpredictable on this device rather than
+  // just a bug in how it was being parsed here. continuous:false is the
+  // one mode that reliably produces exactly one clean final result per
+  // session, so a mid-note pause is now handled by chaining a fresh session
+  // right after the previous one ends (see onend/onerror below) instead of
+  // relying on one ambiguous continuous stream.
+  rec.continuous = false;
   rec.interimResults = true;
   return rec;
 }
@@ -5251,38 +5262,27 @@ function startCaptureRecording() {
   status.textContent = "Listening… tap mic again when you're done";
   transcript.style.display = "none";
   speechFinal = "";
+  speechSegmentFinal = "";
+  speechUserStopped = false;
   speechRecognition.onresult = (event) => {
     let interim = "";
+    // continuous:false means at most one final result per session — plain
+    // assignment (not accumulation) is correct and sufficient here.
     for (let i = 0; i < event.results.length; i++) {
       const t = event.results[i][0].transcript;
-      if (event.results[i].isFinal) {
-        // On this device (Kelvin, 2026-09-12, Android), a "final" result
-        // isn't a new incremental piece to add on — it's a fuller
-        // RESTATEMENT of the whole phrase heard so far under a new
-        // results[] index each time a word gets finalized ("note" →
-        // "note Gloria" → "note Gloria take" → ...). Naively appending
-        // every final segment (tried previously) compounds all of those
-        // restatements together into repeated, nested garbage. Detect a
-        // restatement by prefix match against what's already accumulated
-        // and REPLACE in that case; only append when the new segment
-        // genuinely ISN'T a continuation of it — a real second segment
-        // after a longer thinking pause, which is the actual scenario
-        // continuous mode exists to support.
-        const soFar = speechFinal.trim();
-        const fresh = t.trim();
-        if (!soFar || fresh.toLowerCase().startsWith(soFar.toLowerCase())) {
-          speechFinal = t;
-        } else {
-          speechFinal = speechFinal + (speechFinal && !/\s$/.test(speechFinal) ? " " : "") + t;
-        }
-      } else {
-        interim += t;
-      }
+      if (event.results[i].isFinal) speechSegmentFinal = t;
+      else interim += t;
     }
-    text.textContent = speechFinal + (interim ? " " + interim : "");
+    const shown = speechFinal + (speechFinal && speechSegmentFinal ? " " : "") + speechSegmentFinal;
+    text.textContent = shown + (interim ? " " + interim : "");
     transcript.style.display = "";
   };
   speechRecognition.onerror = (e) => {
+    // "no-speech" fires after nearly every natural pause once continuous is
+    // false — as long as the mic button itself hasn't been tapped to stop,
+    // treat it exactly like a normal segment end (below) and keep going,
+    // rather than surfacing it as a fatal error that kills the recording.
+    if (e.error === "no-speech" && !speechUserStopped) return;
     btn.classList.remove("recording");
     const msgs = {
       "no-speech": "⚠ No speech detected. Speak closer or check your microphone in Windows sound settings.",
@@ -5297,6 +5297,23 @@ function startCaptureRecording() {
     console.warn("SpeechRecognition error:", e);
   };
   speechRecognition.onend = () => {
+    // Fold this segment into the running total, then decide whether to keep
+    // going or process immediately.
+    if (speechSegmentFinal) {
+      speechFinal = speechFinal ? speechFinal + " " + speechSegmentFinal : speechSegmentFinal;
+      speechSegmentFinal = "";
+    }
+    // Only a Note-in-progress waits for a manual mic tap to finish — every
+    // other voice interaction (a quick catalog item like "Glucose 95") keeps
+    // processing immediately after the first natural pause, exactly like
+    // before continuous chaining existed. Requiring an extra tap on every
+    // single voice command, not just notes, would be a real regression for
+    // the far more common quick-command case.
+    const looksLikeNote = /^(?:log|add)?\s*notes?\b/i.test(speechFinal.trim());
+    if (!speechUserStopped && looksLikeNote) {
+      try { speechRecognition.start(); return; }
+      catch (e) { /* fall through and process whatever's been captured so far */ }
+    }
     btn.classList.remove("recording");
     const finalText = speechFinal.trim();
     if (finalText) {
@@ -5336,6 +5353,7 @@ function startCaptureRecording() {
 }
 
 function stopCaptureRecording() {
+  speechUserStopped = true;
   if (speechRecognition) {
     try { speechRecognition.stop(); } catch (e) {}
   }
@@ -5950,30 +5968,6 @@ function tryNoteVoiceCommand(text, opts) {
   return false;
 }
 
-// Looks at Food logs + Test readings on the same date, in the 2 hours
-// leading up to a note's timestamp — a plain lookup over existing state,
-// no AI. Mirrors the "what happened before this" idea from the Health page's
-// existing per-test history, just windowed and applied to a Note instead.
-function getNoteContext(note) {
-  const windowMin = 120;
-  const noteMin = timeToMinutes(note.time || "00:00");
-  const meals = (state.logs || []).filter(l => l.date === note.date && l.cat === "Food" &&
-    typeof l.time === "string" && timeToMinutes(l.time) <= noteMin && timeToMinutes(l.time) >= noteMin - windowMin);
-  const tests = [];
-  const dayTests = (state.testResults || {})[note.date] || {};
-  for (const testName in dayTests) {
-    for (const time in dayTests[testName]) {
-      const tMin = timeToMinutes(time);
-      if (tMin <= noteMin && tMin >= noteMin - windowMin) {
-        const entry = dayTests[testName][time];
-        const best = pickBestReading(testName, entry.readings || []);
-        tests.push({ name: testName, time, value: best ? best.value : "", units: entry.units || "" });
-      }
-    }
-  }
-  return { meals, tests };
-}
-
 // Renders a filtered/searched note list into any container (Health page's
 // always-visible recent list, or the full Note Log modal) — same rendering,
 // different scope, so the two views can't silently drift apart.
@@ -6009,20 +6003,14 @@ function renderNoteLogResults(query, containerId, limit) {
     list.innerHTML = '<div style="color:var(--text-dim); font-size:12px;">No notes found' + (q ? ' for "' + escapeHtml(query) + '"' : (containerId === "healthNotesList" ? ". Say \"Note ...\" from Capture to add one." : ".")) + '</div>';
     return;
   }
+  // Recent meals/test readings around a note's time (tried as a Health-only
+  // feature, briefly) were dropped entirely (Kelvin, 2026-09-12) — that data
+  // already lives safely in the timeline, so Analysis can pull it in when
+  // actually needed rather than permanently duplicating it into every note.
   list.innerHTML = filtered.map(n => {
-    // Recent meals/test readings around the note's time is useful context for
-    // a Health note (correlating a symptom with what was just eaten/tested)
-    // but pure clutter on a General/Legal/Jobs note — a work note like
-    // "Gloria Lowe's $52.75 and paint" has no business showing a glucose
-    // reading underneath it.
-    const ctx = n.category === "Health" ? getNoteContext(n) : { meals: [], tests: [] };
-    const ctxParts = [];
-    if (ctx.meals.length) ctxParts.push("🍽️ " + ctx.meals.map(m => escapeHtml(m.name) + " (" + m.time + ")").join(", "));
-    if (ctx.tests.length) ctxParts.push("🩺 " + ctx.tests.map(t => escapeHtml(t.name) + ": " + escapeHtml(t.value) + (t.units ? " " + escapeHtml(t.units) : "") + " (" + t.time + ")").join(", "));
     return `<div style="padding:8px 10px; border-bottom:1px solid var(--border);">` +
       `<div style="font-size:11px; color:var(--text-dim);">${escapeHtml(n.date)} ${escapeHtml(n.time)} · ${escapeHtml(n.category || "General")}${n.severity ? " · Severity " + n.severity + "/10" : ""}</div>` +
       `<div style="font-size:13px; margin:2px 0;">${escapeHtml(n.text)}</div>` +
-      (ctxParts.length ? `<div style="font-size:11px; color:var(--text-dim); margin-top:4px;">Prior 2h: ${ctxParts.join(" · ")}</div>` : "") +
       `</div>`;
   }).join("");
 }
