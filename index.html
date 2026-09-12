@@ -1941,7 +1941,7 @@
 // Bump this on every deploy-worthy change — shown in the header and footer so
 // it's obvious at a glance whether a given device (phone vs desktop) has
 // actually picked up the latest deployed version after a reload.
-const APP_VERSION = "v103";
+const APP_VERSION = "v104";
 
 const STORAGE_KEY = "opto_app_v2";
 
@@ -5216,7 +5216,6 @@ function deleteEditModal() {
 // ============================================================================
 let speechRecognition = null;
 let speechFinal = "";
-let speechFinalCount = 0;
 
 function captureSpeechSupported() {
   return !!(window.SpeechRecognition || window.webkitSpeechRecognition);
@@ -5252,25 +5251,29 @@ function startCaptureRecording() {
   status.textContent = "Listening… tap mic again when you're done";
   transcript.style.display = "none";
   speechFinal = "";
-  speechFinalCount = 0;
-
   speechRecognition.onresult = (event) => {
     let interim = "";
-    // Iterate from 0 and track how many results this session has already
-    // finalized (speechFinalCount), rather than trusting event.resultIndex
-    // to correctly skip past already-processed ones — with continuous mode
-    // (needed so a mid-note pause doesn't end the recording), real-device
-    // testing (Kelvin, 2026-09-11, Android) showed a later onresult event
-    // re-reporting an already-final segment, which blindly trusting
-    // resultIndex would append again, producing a repeated/duplicated
-    // transcript ("note Gloria" x5). This guards against that regardless of
-    // whether resultIndex itself is the actual culprit.
     for (let i = 0; i < event.results.length; i++) {
       const t = event.results[i][0].transcript;
       if (event.results[i].isFinal) {
-        if (i >= speechFinalCount) {
-          speechFinal += t;
-          speechFinalCount = i + 1;
+        // On this device (Kelvin, 2026-09-12, Android), a "final" result
+        // isn't a new incremental piece to add on — it's a fuller
+        // RESTATEMENT of the whole phrase heard so far under a new
+        // results[] index each time a word gets finalized ("note" →
+        // "note Gloria" → "note Gloria take" → ...). Naively appending
+        // every final segment (tried previously) compounds all of those
+        // restatements together into repeated, nested garbage. Detect a
+        // restatement by prefix match against what's already accumulated
+        // and REPLACE in that case; only append when the new segment
+        // genuinely ISN'T a continuation of it — a real second segment
+        // after a longer thinking pause, which is the actual scenario
+        // continuous mode exists to support.
+        const soFar = speechFinal.trim();
+        const fresh = t.trim();
+        if (!soFar || fresh.toLowerCase().startsWith(soFar.toLowerCase())) {
+          speechFinal = t;
+        } else {
+          speechFinal = speechFinal + (speechFinal && !/\s$/.test(speechFinal) ? " " : "") + t;
         }
       } else {
         interim += t;
@@ -5856,7 +5859,7 @@ function openNoteModal(opts) {
 
 // Short code shown on the Main-timeline pill per category — kept as a single
 // lookup so the Notes row and any other Notes UI stay in sync automatically.
-const NOTE_CATEGORY_PILL_CODE = { Health: "N-H", Legal: "N-L", General: "N-G" };
+const NOTE_CATEGORY_PILL_CODE = { Health: "N-H", Legal: "N-L", Jobs: "N-J", General: "N-G" };
 
 function saveNoteEntry() {
   const text = document.getElementById("noteText").value.trim();
