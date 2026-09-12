@@ -1941,7 +1941,7 @@
 // Bump this on every deploy-worthy change — shown in the header and footer so
 // it's obvious at a glance whether a given device (phone vs desktop) has
 // actually picked up the latest deployed version after a reload.
-const APP_VERSION = "v110";
+const APP_VERSION = "v111";
 
 const STORAGE_KEY = "opto_app_v2";
 
@@ -6091,8 +6091,14 @@ function openNoteLog(query, dateRange, skipFocus) {
   // are likely to type — but a voice command ("Notes Gloria"/"Notes today")
   // already said what to look for, and just wants to look at the results
   // hands-free. Focusing there instead pops the on-screen keyboard, eating
-  // half the screen you're trying to read (Kelvin, 2026-09-12).
+  // half the screen you're trying to read (Kelvin, 2026-09-12). Actively
+  // blur, not just skip focusing — on a later voice command the search box
+  // can still be the currently-focused element left over from however the
+  // previous Note Log view got dismissed, and the on-screen keyboard follows
+  // whatever already has focus regardless of whether anything just called
+  // .focus() again.
   if (!skipFocus) setTimeout(() => document.getElementById("noteLogQuery").focus(), 60);
+  else if (document.activeElement) document.activeElement.blur();
 }
 
 function saveCaptureTranscript() {
