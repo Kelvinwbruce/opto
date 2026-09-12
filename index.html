@@ -1941,7 +1941,7 @@
 // Bump this on every deploy-worthy change — shown in the header and footer so
 // it's obvious at a glance whether a given device (phone vs desktop) has
 // actually picked up the latest deployed version after a reload.
-const APP_VERSION = "v108";
+const APP_VERSION = "v109";
 
 const STORAGE_KEY = "opto_app_v2";
 
@@ -5328,13 +5328,16 @@ function startCaptureRecording() {
       speechFinal = speechFinal ? speechFinal + " " + speechSegmentFinal : speechSegmentFinal;
       speechSegmentFinal = "";
     }
-    // Only a Note-in-progress waits for a manual mic tap (or spoken "Stop")
-    // to finish — every other voice interaction (a quick catalog item like
-    // "Glucose 95") keeps processing immediately after the first natural
-    // pause, exactly like before continuous chaining existed. Requiring an
-    // extra tap/word on every single voice command, not just notes, would
-    // be a real regression for the far more common quick-command case.
-    const looksLikeNote = /^(?:log|add)?\s*notes?\b/i.test(speechFinal.trim());
+    // Only a Note-in-progress (singular "note" — capture) waits for a manual
+    // mic tap (or spoken "Stop") to finish — every other voice interaction,
+    // including a "Notes ..." (plural — view) command and a quick catalog
+    // item like "Glucose 95", keeps processing immediately after the first
+    // natural pause, exactly like before continuous chaining existed. "note\b"
+    // (not "notes?\b") — Kelvin, 2026-09-12: this matched "notes" too, so
+    // "Notes Gloria" got stuck waiting for more speech instead of opening
+    // the Note Log right away, exactly the same singular/plural mixup
+    // tryNoteVoiceCommand's own logMatch/viewMatch regexes already avoid.
+    const looksLikeNote = /^(?:log|add)?\s*note\b/i.test(speechFinal.trim());
     if (!speechUserStopped && looksLikeNote) {
       try { speechRecognition.start(); return; }
       catch (e) { /* fall through and process whatever's been captured so far */ }
