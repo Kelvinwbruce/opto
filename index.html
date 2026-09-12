@@ -1941,7 +1941,7 @@
 // Bump this on every deploy-worthy change — shown in the header and footer so
 // it's obvious at a glance whether a given device (phone vs desktop) has
 // actually picked up the latest deployed version after a reload.
-const APP_VERSION = "v109";
+const APP_VERSION = "v110";
 
 const STORAGE_KEY = "opto_app_v2";
 
@@ -5962,7 +5962,7 @@ function tryNoteVoiceCommand(text, opts) {
     const query = (viewMatch[1] || "").trim();
     if (typeof openNoteLog === "function") {
       if (/^today$/i.test(query)) {
-        openNoteLog("", "today");
+        openNoteLog("", "today", true);
         if (opts.fromVoice) speak("Showing today's notes");
       } else {
         // Same fuzzy job-name correction as the capture path below — a
@@ -5980,7 +5980,7 @@ function tryNoteVoiceCommand(text, opts) {
             searchQuery = qWords.join(" ");
           }
         }
-        openNoteLog(searchQuery);
+        openNoteLog(searchQuery, null, true);
         if (opts.fromVoice) speak(searchQuery ? "Showing notes about " + searchQuery : "Showing all notes");
       }
     }
@@ -6075,7 +6075,7 @@ function updateNoteLogFilterButtons() {
   });
 }
 
-function openNoteLog(query, dateRange) {
+function openNoteLog(query, dateRange, skipFocus) {
   const modal = document.getElementById("noteLogModal");
   if (!modal) return;
   // Reset to Most Recent each time this opens fresh, unless a specific range
@@ -6087,7 +6087,12 @@ function openNoteLog(query, dateRange) {
   document.getElementById("noteLogQuery").value = query || "";
   renderNoteLogResults(query || "", "noteLogResults");
   modal.classList.add("open");
-  setTimeout(() => document.getElementById("noteLogQuery").focus(), 60);
+  // Auto-focusing the search box makes sense when you tapped your way in and
+  // are likely to type — but a voice command ("Notes Gloria"/"Notes today")
+  // already said what to look for, and just wants to look at the results
+  // hands-free. Focusing there instead pops the on-screen keyboard, eating
+  // half the screen you're trying to read (Kelvin, 2026-09-12).
+  if (!skipFocus) setTimeout(() => document.getElementById("noteLogQuery").focus(), 60);
 }
 
 function saveCaptureTranscript() {
