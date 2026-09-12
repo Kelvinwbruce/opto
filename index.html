@@ -1941,7 +1941,7 @@
 // Bump this on every deploy-worthy change — shown in the header and footer so
 // it's obvious at a glance whether a given device (phone vs desktop) has
 // actually picked up the latest deployed version after a reload.
-const APP_VERSION = "v102";
+const APP_VERSION = "v103";
 
 const STORAGE_KEY = "opto_app_v2";
 
@@ -5216,6 +5216,7 @@ function deleteEditModal() {
 // ============================================================================
 let speechRecognition = null;
 let speechFinal = "";
+let speechFinalCount = 0;
 
 function captureSpeechSupported() {
   return !!(window.SpeechRecognition || window.webkitSpeechRecognition);
@@ -5251,13 +5252,29 @@ function startCaptureRecording() {
   status.textContent = "Listening… tap mic again when you're done";
   transcript.style.display = "none";
   speechFinal = "";
+  speechFinalCount = 0;
 
   speechRecognition.onresult = (event) => {
     let interim = "";
-    for (let i = event.resultIndex; i < event.results.length; i++) {
+    // Iterate from 0 and track how many results this session has already
+    // finalized (speechFinalCount), rather than trusting event.resultIndex
+    // to correctly skip past already-processed ones — with continuous mode
+    // (needed so a mid-note pause doesn't end the recording), real-device
+    // testing (Kelvin, 2026-09-11, Android) showed a later onresult event
+    // re-reporting an already-final segment, which blindly trusting
+    // resultIndex would append again, producing a repeated/duplicated
+    // transcript ("note Gloria" x5). This guards against that regardless of
+    // whether resultIndex itself is the actual culprit.
+    for (let i = 0; i < event.results.length; i++) {
       const t = event.results[i][0].transcript;
-      if (event.results[i].isFinal) speechFinal += t;
-      else interim += t;
+      if (event.results[i].isFinal) {
+        if (i >= speechFinalCount) {
+          speechFinal += t;
+          speechFinalCount = i + 1;
+        }
+      } else {
+        interim += t;
+      }
     }
     text.textContent = speechFinal + (interim ? " " + interim : "");
     transcript.style.display = "";
