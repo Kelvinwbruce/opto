@@ -1941,7 +1941,7 @@
 // Bump this on every deploy-worthy change — shown in the header and footer so
 // it's obvious at a glance whether a given device (phone vs desktop) has
 // actually picked up the latest deployed version after a reload.
-const APP_VERSION = "v107";
+const APP_VERSION = "v108";
 
 const STORAGE_KEY = "opto_app_v2";
 
@@ -5962,8 +5962,23 @@ function tryNoteVoiceCommand(text, opts) {
         openNoteLog("", "today");
         if (opts.fromVoice) speak("Showing today's notes");
       } else {
-        openNoteLog(query);
-        if (opts.fromVoice) speak(query ? "Showing notes about " + query : "Showing all notes");
+        // Same fuzzy job-name correction as the capture path below — a
+        // misheard "Notes Delsea" should search for the learned "Dilcia"
+        // spelling, not the literal mishearing, same reasoning as
+        // findJobNameMatch's other use (Kelvin, 2026-09-12: "Notes Dilcia"
+        // came up empty because this correction only ran on capture, never
+        // on search).
+        let searchQuery = query;
+        if (query) {
+          const qWords = query.split(/\s+/);
+          const qJobMatch = typeof findJobNameMatch === "function" ? findJobNameMatch(qWords[0]) : null;
+          if (qJobMatch) {
+            qWords[0] = qJobMatch;
+            searchQuery = qWords.join(" ");
+          }
+        }
+        openNoteLog(searchQuery);
+        if (opts.fromVoice) speak(searchQuery ? "Showing notes about " + searchQuery : "Showing all notes");
       }
     }
     return true;
