@@ -1941,7 +1941,7 @@
 // Bump this on every deploy-worthy change — shown in the header and footer so
 // it's obvious at a glance whether a given device (phone vs desktop) has
 // actually picked up the latest deployed version after a reload.
-const APP_VERSION = "v111";
+const APP_VERSION = "v112";
 
 const STORAGE_KEY = "opto_app_v2";
 
@@ -5871,7 +5871,9 @@ function handleNoteCategoryChange() {
 // suggestions (typically from fastParseNote) — always editable, never final.
 function openNoteModal(opts) {
   opts = opts || {};
-  activeNote = {};
+  activeNote = { id: opts.id || null };
+  const titleEl = document.getElementById("noteModalTitle");
+  if (titleEl) titleEl.textContent = opts.id ? "Edit Note" : "Note";
   const text = opts.text || "";
   document.getElementById("noteText").value = text;
   renderNoteCategoryOptions();
@@ -5920,10 +5922,16 @@ function saveNoteEntry() {
   const sevRaw = parseInt(document.getElementById("noteSeverity").value, 10);
   const severity = category === "Health" && sevRaw > 0 ? sevRaw : null;
   if (!Array.isArray(state.intake.notes)) state.intake.notes = [];
-  const date = todayDate();
-  const time = nowHHMM();
-  const id = "note_" + Date.now() + "_" + Math.floor(Math.random() * 1000);
-  state.intake.notes.push({ id, date, time, text, category, severity });
+  const editingId = activeNote && activeNote.id;
+  if (editingId) {
+    const note = state.intake.notes.find(n => n.id === editingId);
+    if (note) { note.text = text; note.category = category; note.severity = severity; }
+  } else {
+    const date = todayDate();
+    const time = nowHHMM();
+    const id = "note_" + Date.now() + "_" + Math.floor(Math.random() * 1000);
+    state.intake.notes.push({ id, date, time, text, category, severity });
+  }
 
   // No more companion Main-timeline pill (Kelvin, 2026-09-12) — it only ever
   // showed a cryptic code like "N-G", needing a tap to find out what it even
@@ -5933,9 +5941,20 @@ function saveNoteEntry() {
   saveState();
   document.getElementById("noteModal").classList.remove("open");
   activeNote = null;
-  if (typeof showToast === "function") showToast("✓ Note saved");
+  if (typeof showToast === "function") showToast(editingId ? "✓ Note updated" : "✓ Note saved");
   const mainPage = document.getElementById("page-main");
   if (typeof renderMain === "function" && mainPage && mainPage.classList.contains("active")) renderMain();
+  // An edit is launched from the Note Log (see editNoteEntry), which closes
+  // itself first so the two modal-bg overlays never stack. Reopen it after
+  // saving so Kelvin lands back in the list, refreshed, to keep cleaning out
+  // old notes without re-triggering the view from scratch each time.
+  if (editingId && typeof openNoteLog === "function") {
+    openNoteLog(document.getElementById("noteLogQuery").value, noteLogDateRange, true);
+  }
+  const healthPage = document.getElementById("page-health");
+  if (healthPage && healthPage.classList.contains("active") && typeof renderNoteLogResults === "function") {
+    renderNoteLogResults("", "healthNotesList", 15);
+  }
 }
 
 // Dedicated voice command for Notes — checked BEFORE normal category/item
@@ -6056,12 +6075,52 @@ function renderNoteLogResults(query, containerId, limit) {
   // feature, briefly) were dropped entirely (Kelvin, 2026-09-12) — that data
   // already lives safely in the timeline, so Analysis can pull it in when
   // actually needed rather than permanently duplicating it into every note.
+  // Edit/Delete only make sense in the full Note Log modal — the Health
+  // page's always-visible recent-15 list (healthNotesList) stays read-only
+  // to keep that quick-glance view uncluttered.
   list.innerHTML = filtered.map(n => {
-    return `<div style="padding:8px 10px; border-bottom:1px solid var(--border);">` +
+    const actions = isMainLogView ?
+      `<div style="display:flex; gap:6px; flex-shrink:0;">` +
+        `<button type="button" class="note-edit-btn" data-id="${escapeAttr(n.id)}" style="padding:4px 10px; font-size:11px; background:transparent; color:var(--text-dim); border:1px solid var(--border); border-radius:6px; cursor:pointer;">Edit</button>` +
+        `<button type="button" class="note-delete-btn" data-id="${escapeAttr(n.id)}" style="padding:4px 10px; font-size:11px; background:transparent; color:var(--warn); border:1px solid var(--warn); border-radius:6px; cursor:pointer;">Delete</button>` +
+      `</div>` : "";
+    return `<div style="padding:8px 10px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:flex-start; gap:8px;">` +
+      `<div style="min-width:0;">` +
       `<div style="font-size:11px; color:var(--text-dim);">${escapeHtml(n.date)} ${escapeHtml(n.time)} · ${escapeHtml(n.category || "General")}${n.severity ? " · Severity " + n.severity + "/10" : ""}</div>` +
       `<div style="font-size:13px; margin:2px 0;">${escapeHtml(n.text)}</div>` +
+      `</div>` +
+      actions +
       `</div>`;
   }).join("");
+  if (isMainLogView) {
+    list.querySelectorAll(".note-edit-btn").forEach(btn => { btn.onclick = () => editNoteEntry(btn.dataset.id); });
+    list.querySelectorAll(".note-delete-btn").forEach(btn => { btn.onclick = () => deleteNoteEntry(btn.dataset.id); });
+  }
+}
+
+// Reopens the Note entry modal pre-filled from an existing note, saved back
+// in place by saveNoteEntry (keyed off activeNote.id) rather than creating a
+// duplicate. Closes the Note Log first since both are modal-bg overlays with
+// the same z-index — stacked open together, the later-in-DOM Note Log would
+// render on top and hide the edit form. saveNoteEntry/noteCancel reopen the
+// Note Log afterward so the list is where Kelvin left it.
+function editNoteEntry(id) {
+  const note = (state.intake.notes || []).find(n => n.id === id);
+  if (!note) return;
+  const logModal = document.getElementById("noteLogModal");
+  if (logModal) logModal.classList.remove("open");
+  openNoteModal({ id: note.id, text: note.text, category: note.category, severity: note.severity });
+}
+
+function deleteNoteEntry(id) {
+  const note = (state.intake.notes || []).find(n => n.id === id);
+  if (!note) return;
+  if (!confirm("Delete this note?\n\n\"" + note.text + "\"")) return;
+  state.intake.notes = state.intake.notes.filter(n => n.id !== id);
+  saveState();
+  renderNoteLogResults(document.getElementById("noteLogQuery").value, "noteLogResults");
+  const healthPage = document.getElementById("page-health");
+  if (healthPage && healthPage.classList.contains("active")) renderNoteLogResults("", "healthNotesList", 15);
 }
 
 // Highlights whichever quick-filter button matches the current
@@ -8541,7 +8600,11 @@ function wire() {
   document.getElementById("addCatSave").onclick = saveAddCategoryModal;
   document.getElementById("noteCancel").onclick = () => {
     document.getElementById("noteModal").classList.remove("open");
+    const wasEditing = activeNote && activeNote.id;
     activeNote = null;
+    if (wasEditing && typeof openNoteLog === "function") {
+      openNoteLog(document.getElementById("noteLogQuery").value, noteLogDateRange, true);
+    }
   };
   document.getElementById("noteSave").onclick = saveNoteEntry;
   document.getElementById("noteCategory").addEventListener("change", () => {
