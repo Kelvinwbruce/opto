@@ -408,6 +408,8 @@
   .four-hour .slot-pill.is-log::before { content: "+ "; opacity: 0.7; font-weight: 700; color: var(--accent-2); }
   .four-hour .slot-pill.is-new-recurring { box-shadow: 0 0 0 2px rgba(110,231,183,0.55); }
   .four-hour .slot-pill.is-new-recurring::after { content: " ★"; color: var(--accent); }
+  .four-hour .slot-pill.todo { border-left: 3px solid #60a5fa; background: rgba(96,165,250,0.14); }
+  .four-hour .slot-pill.todo::before { content: "☐ "; opacity: 0.85; }
   .slot-pill .dot {
     display: inline-block; width: 6px; height: 6px; border-radius: 50%;
     background: var(--text-dim); margin-right: 5px; vertical-align: middle;
@@ -1941,7 +1943,7 @@
 // Bump this on every deploy-worthy change — shown in the header and footer so
 // it's obvious at a glance whether a given device (phone vs desktop) has
 // actually picked up the latest deployed version after a reload.
-const APP_VERSION = "v112";
+const APP_VERSION = "v113";
 
 const STORAGE_KEY = "opto_app_v2";
 
@@ -3560,12 +3562,23 @@ function scheduleForDate(dateStr) {
         name: v.visit + (v.name ? " — " + v.name : ""), detail: v.reason || "", _appt: true });
     }
   }
+  // Open (not-done) ToDo notes show up on the timeline the day they were
+  // captured — done ones drop off automatically (Kelvin, 2026-09-13). Unlike
+  // the old removed Notes pill, the full text rides along in `detail` (shown
+  // via the pill's title tooltip and the mark-done confirm), so it's never
+  // cryptic.
+  for (const n of (state.intake.notes || [])) {
+    if (n.category === "ToDo" && n.date === dateStr && !n.done) {
+      const label = n.text.length > 24 ? n.text.slice(0, 24) + "…" : n.text;
+      items.push({ cat: "ToDo", time: n.time || "00:00", name: label, detail: n.text, _todo: true, _noteId: n.id });
+    }
+  }
   // Real-time entries supersede a planned item in the same slot (same cat+name,
   // same 30-min bucket) — show only the confirmed reality, not the reminder.
   const logSlotKeys = new Set(items.filter(it => it._log).map(slotBucketKey));
   const now = Date.now();
   items = items.filter(it => {
-    if (it._log || it._appt) return true;
+    if (it._log || it._appt || it._todo) return true;
     if (logSlotKeys.has(slotBucketKey(it))) return false;
     const st = getStatusForDate(it, dateStr);
     // Explicitly dismissed for this one day via "Skip today" — hide immediately,
@@ -3798,7 +3811,7 @@ function renderMain() {
   // De-duplicated: a custom category can share an id with "Xcheck"/"Notes"
   // (e.g. a leftover custom "Notes" category created before the real Notes
   // feature existed) — without this, that collision renders the same row twice.
-  const cats = [...new Set([...CATEGORY_REGISTRY.filter(c => c.mainRow).map(c => c.id), "Xcheck", "Notes"])].sort();
+  const cats = [...new Set([...CATEGORY_REGISTRY.filter(c => c.mainRow).map(c => c.id), "Xcheck", "Notes", "ToDo"])].sort();
   for (const cat of cats) {
     const items = sched.filter(s => s.cat === cat);
     const prevItems = needsPrevDay ? prevSched.filter(s => s.cat === cat) : [];
@@ -3826,8 +3839,8 @@ function renderMain() {
         // confirmed and shown in their own blue "is-log" color instead.
         // Appointments keep their original manual complete/notcomp behavior
         // (unaffected by the new auto-orange/plan-verification rules).
-        const st = it._log ? "" : (it._appt ? getStatus(it, colDateStr) : getVisualStatus(it, colDateStr));
-        const apptCls = it._appt ? " appt" : "";
+        const st = (it._log || it._todo) ? "" : (it._appt ? getStatus(it, colDateStr) : getVisualStatus(it, colDateStr));
+        const apptCls = it._appt ? " appt" : (it._todo ? " todo" : "");
         let imminentCls = "";
         if (it._appt) {
           const [ah, am] = (it.time||"00:00").split(":").map(Number);
@@ -3886,6 +3899,14 @@ function renderMain() {
         } else {
           showToast("Already logged — right-click (or double-tap) to delete");
         }
+      } else if (item._todo) {
+        // Tapping a ToDo pill is the "give more detail" view Kelvin asked
+        // for — the pill itself only shows a truncated preview, so this
+        // surfaces the full text plus a one-tap way to clear it once done.
+        if (confirm(item.detail + "\n\nMark as done?")) {
+          const note = (state.intake.notes || []).find(n => n.id === item._noteId);
+          if (note) { note.done = true; saveState(); renderMain(); }
+        }
       } else {
         cycleStatus(item, pillDateStr);
       }
@@ -3897,7 +3918,13 @@ function renderMain() {
       const pillDateStr = p.dataset.date || viewDateStr;
       const item = schedForDelta(pillDateStr === prevDateStr ? -1 : (pillDateStr === nextDateStr ? 1 : 0)).find(it => statusKey(it) === key);
       if (!item) return;
-      if (item._log) {
+      if (item._todo) {
+        if (confirm("Delete this ToDo?\n\n\"" + item.detail + "\"")) {
+          state.intake.notes = (state.intake.notes || []).filter(n => n.id !== item._noteId);
+          saveState();
+          renderMain();
+        }
+      } else if (item._log) {
         if (confirm("Delete \"" + item.name + "\" from " + pillDateStr + "'s log?")) {
           state.logs = (state.logs||[]).filter(l => l.id !== item._logId);
           if (item.cat === "Notes" && item._noteId) {
@@ -5834,7 +5861,7 @@ function findRelatedNotes(text) {
 // noteCategories, user-added via the "+ Add Category" option) always follow
 // these, with "+ Add Category" itself pinned last regardless of how many
 // custom ones exist.
-const NOTE_BUILTIN_CATEGORIES = ["Health", "Legal", "Jobs", "General"];
+const NOTE_BUILTIN_CATEGORIES = ["Health", "Legal", "Jobs", "ToDo", "General"];
 function renderNoteCategoryOptions(selectEl) {
   const sel = selectEl || document.getElementById("noteCategory");
   if (!sel) return;
@@ -5925,12 +5952,15 @@ function saveNoteEntry() {
   const editingId = activeNote && activeNote.id;
   if (editingId) {
     const note = state.intake.notes.find(n => n.id === editingId);
-    if (note) { note.text = text; note.category = category; note.severity = severity; }
+    if (note) {
+      note.text = text; note.category = category; note.severity = severity;
+      if (category === "ToDo" && typeof note.done !== "boolean") note.done = false;
+    }
   } else {
     const date = todayDate();
     const time = nowHHMM();
     const id = "note_" + Date.now() + "_" + Math.floor(Math.random() * 1000);
-    state.intake.notes.push({ id, date, time, text, category, severity });
+    state.intake.notes.push({ id, date, time, text, category, severity, done: category === "ToDo" ? false : null });
   }
 
   // No more companion Main-timeline pill (Kelvin, 2026-09-12) — it only ever
@@ -6016,17 +6046,27 @@ function tryNoteVoiceCommand(text, opts) {
     // recognized) job name is a Jobs note regardless of what words follow,
     // so this takes priority over fastParseNote's category guess.
     const words = body.split(/\s+/);
-    const jobMatch = typeof findJobNameMatch === "function" ? findJobNameMatch(words[0]) : null;
+    // "ToDo" is an explicit spoken category keyword (like "Jobs" used to be
+    // guessed from content), not a fuzzy-matched name — checked first so it
+    // can't be shadowed by a coincidentally similar known job name.
+    const todoMatch = /^to\s*-?\s*do\b/i.test(body);
     let finalBody = body, category, severity;
-    if (jobMatch) {
-      words[0] = jobMatch;
-      finalBody = words.join(" ");
-      category = "Jobs";
+    if (todoMatch) {
+      finalBody = body.replace(/^to\s*-?\s*do\b\s*/i, "").trim();
+      category = "ToDo";
       severity = null;
     } else {
-      const parsed = fastParseNote(body);
-      category = parsed.category;
-      severity = parsed.severity;
+      const jobMatch = typeof findJobNameMatch === "function" ? findJobNameMatch(words[0]) : null;
+      if (jobMatch) {
+        words[0] = jobMatch;
+        finalBody = words.join(" ");
+        category = "Jobs";
+        severity = null;
+      } else {
+        const parsed = fastParseNote(body);
+        category = parsed.category;
+        severity = parsed.severity;
+      }
     }
     openNoteModal({ text: finalBody, category, severity });
     if (opts.fromVoice) speak(body ? "Note ready to save" : "Listening for your note");
@@ -6086,7 +6126,7 @@ function renderNoteLogResults(query, containerId, limit) {
       `</div>` : "";
     return `<div style="padding:8px 10px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:flex-start; gap:8px;">` +
       `<div style="min-width:0;">` +
-      `<div style="font-size:11px; color:var(--text-dim);">${escapeHtml(n.date)} ${escapeHtml(n.time)} · ${escapeHtml(n.category || "General")}${n.severity ? " · Severity " + n.severity + "/10" : ""}</div>` +
+      `<div style="font-size:11px; color:var(--text-dim);">${escapeHtml(n.date)} ${escapeHtml(n.time)} · ${escapeHtml(n.category || "General")}${n.severity ? " · Severity " + n.severity + "/10" : ""}${n.category === "ToDo" ? (n.done ? " · <span style=\"color:var(--good);\">✓ Done</span>" : " · Open") : ""}</div>` +
       `<div style="font-size:13px; margin:2px 0;">${escapeHtml(n.text)}</div>` +
       `</div>` +
       actions +
