@@ -1943,7 +1943,7 @@
 // Bump this on every deploy-worthy change — shown in the header and footer so
 // it's obvious at a glance whether a given device (phone vs desktop) has
 // actually picked up the latest deployed version after a reload.
-const APP_VERSION = "v113";
+const APP_VERSION = "v114";
 
 const STORAGE_KEY = "opto_app_v2";
 
@@ -6013,6 +6013,14 @@ function tryNoteVoiceCommand(text, opts) {
       if (/^today$/i.test(query)) {
         openNoteLog("", "today", true);
         if (opts.fromVoice) speak("Showing today's notes");
+      } else if (/^to\s*-?\s*do$/i.test(query)) {
+        // Phones transcribe "ToDo" as two words, "to do" — but the stored
+        // category is "ToDo" with no space, so a literal text search for
+        // "to do" never matches it (Kelvin, 2026-09-13). Substitute the
+        // correctly-spelled category name instead of searching the raw
+        // (mis-spaced) transcript.
+        openNoteLog("ToDo", null, true);
+        if (opts.fromVoice) speak("Showing ToDo notes");
       } else {
         // Same fuzzy job-name correction as the capture path below — a
         // misheard "Notes Delsea" should search for the learned "Dilcia"
