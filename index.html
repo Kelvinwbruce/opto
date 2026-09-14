@@ -1943,7 +1943,7 @@
 // Bump this on every deploy-worthy change — shown in the header and footer so
 // it's obvious at a glance whether a given device (phone vs desktop) has
 // actually picked up the latest deployed version after a reload.
-const APP_VERSION = "v116";
+const APP_VERSION = "v117";
 
 const STORAGE_KEY = "opto_app_v2";
 
@@ -5635,7 +5635,7 @@ function extractReadingFromVoiceText(text, itemName) {
   // came through as the literal word "point", not a decimal, so it silently
   // fell through to just "3") — normalize them the same way here instead of
   // relying on the engine to do it.
-  after = after.replace(/\s*\b(?:point|period|dot)\b\s*/gi, ".");
+  after = after.replace(/\s*\b(?:point|period|dot|decimal)\b\s*/gi, ".");
   // Even when "period"/"dot" correctly becomes a literal "." (Kelvin,
   // 2026-09-14: confirmed "period" reliably does), the number itself can
   // still come through as a spelled-out word ("Ketone period two" →
