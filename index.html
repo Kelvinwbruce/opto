@@ -1943,7 +1943,7 @@
 // Bump this on every deploy-worthy change — shown in the header and footer so
 // it's obvious at a glance whether a given device (phone vs desktop) has
 // actually picked up the latest deployed version after a reload.
-const APP_VERSION = "v117";
+const APP_VERSION = "v118";
 
 const STORAGE_KEY = "opto_app_v2";
 
@@ -5649,6 +5649,14 @@ function extractReadingFromVoiceText(text, itemName) {
   };
   after = after.replace(/\b(zero|one|two|three|four|five|six|seven|eight|nine|ten|too|won|ate)\b/gi,
     (w) => NUMBER_WORDS_FOR_READING[w.toLowerCase()]);
+  // "to" is too common a word to safely treat as "2" for every test item,
+  // but on Ketone specifically the phone has now produced it twice as a
+  // mangling of "two" ("dot two" → "to", "decimal two" → "to" — Kelvin,
+  // 2026-09-14) — scoped narrowly to just this one item rather than
+  // widening the general homophone list above.
+  if (nameLower === "ketone") {
+    after = after.replace(/\bto\b/gi, "2");
+  }
   // When the phone's own auto-punctuation inserts the "." (not our regex
   // above, which already strips its own surrounding whitespace), it can
   // leave a space after it — "ketone. too" → "ketone. 2" post-conversion —
