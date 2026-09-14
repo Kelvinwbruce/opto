@@ -1943,7 +1943,7 @@
 // Bump this on every deploy-worthy change — shown in the header and footer so
 // it's obvious at a glance whether a given device (phone vs desktop) has
 // actually picked up the latest deployed version after a reload.
-const APP_VERSION = "v115";
+const APP_VERSION = "v116";
 
 const STORAGE_KEY = "opto_app_v2";
 
@@ -5649,6 +5649,13 @@ function extractReadingFromVoiceText(text, itemName) {
   };
   after = after.replace(/\b(zero|one|two|three|four|five|six|seven|eight|nine|ten|too|won|ate)\b/gi,
     (w) => NUMBER_WORDS_FOR_READING[w.toLowerCase()]);
+  // When the phone's own auto-punctuation inserts the "." (not our regex
+  // above, which already strips its own surrounding whitespace), it can
+  // leave a space after it — "ketone. too" → "ketone. 2" post-conversion —
+  // and \d*\.?\d+ below doesn't bridge whitespace, so it grabbed only "2"
+  // and silently dropped the leading "." (Kelvin, 2026-09-14, confirmed via
+  // the literal "you said" transcript showing "ketone. too" with a space).
+  after = after.replace(/\.\s+/g, ".").replace(/\s+\./g, ".");
   const bp = after.match(/(\d+)\s*(?:\/|over)\s*(\d+)/);
   if (bp) return bp[1] + "/" + bp[2];
   // \d* (not \d+) before the optional decimal point — readings like Ketone's
