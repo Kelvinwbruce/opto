@@ -1943,7 +1943,7 @@
 // Bump this on every deploy-worthy change — shown in the header and footer so
 // it's obvious at a glance whether a given device (phone vs desktop) has
 // actually picked up the latest deployed version after a reload.
-const APP_VERSION = "v114";
+const APP_VERSION = "v115";
 
 const STORAGE_KEY = "opto_app_v2";
 
@@ -5636,6 +5636,19 @@ function extractReadingFromVoiceText(text, itemName) {
   // fell through to just "3") — normalize them the same way here instead of
   // relying on the engine to do it.
   after = after.replace(/\s*\b(?:point|period|dot)\b\s*/gi, ".");
+  // Even when "period"/"dot" correctly becomes a literal "." (Kelvin,
+  // 2026-09-14: confirmed "period" reliably does), the number itself can
+  // still come through as a spelled-out word ("Ketone period two" →
+  // "ketone.two") rather than a digit — never handled before, digits-only.
+  // Same word list (plus common homophones) fastParseNote/normalizeVoiceText
+  // already use elsewhere in this file.
+  const NUMBER_WORDS_FOR_READING = {
+    zero:"0", one:"1", two:"2", three:"3", four:"4", five:"5",
+    six:"6", seven:"7", eight:"8", nine:"9", ten:"10",
+    too:"2", won:"1", ate:"8"
+  };
+  after = after.replace(/\b(zero|one|two|three|four|five|six|seven|eight|nine|ten|too|won|ate)\b/gi,
+    (w) => NUMBER_WORDS_FOR_READING[w.toLowerCase()]);
   const bp = after.match(/(\d+)\s*(?:\/|over)\s*(\d+)/);
   if (bp) return bp[1] + "/" + bp[2];
   // \d* (not \d+) before the optional decimal point — readings like Ketone's
